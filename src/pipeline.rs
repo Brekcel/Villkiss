@@ -1,6 +1,6 @@
 use std::mem::MaybeUninit;
 
-use gfx_hal::{Device, Primitive, pso::{BlendState, PolygonMode, Face, FrontFace, ColorBlendDesc, ColorMask,
+use gfx_hal::{Device, Primitive, pso::{BlendState, DepthStencilDesc, StencilTest, DepthTest, Comparison, PolygonMode, Face, FrontFace, ColorBlendDesc, ColorMask,
 	GraphicsPipelineDesc, Rasterizer}};
 
 use crate::{HALData, RenderPass, Shader, Swapchain};
@@ -38,6 +38,14 @@ impl<'a> Pipeline<'a> {
 			shad_set, Primitive::TriangleList, RASTERIZER,
 			pipe_layout, subpass
 		);
+		pipeline_desc.depth_stencil = DepthStencilDesc {
+			depth: DepthTest::On {
+				fun: Comparison::Less,
+				write: true
+			},
+			depth_bounds: false,
+			stencil: StencilTest::Off
+		};
 		pipeline_desc.blender.targets.push(ColorBlendDesc(ColorMask::ALL, BlendState::ALPHA));
 
 		shader.describe_vertices(&mut pipeline_desc.vertex_buffers, &mut pipeline_desc.attributes);

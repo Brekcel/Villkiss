@@ -79,7 +79,7 @@ impl<'a> BufferPool<'a> {
 		}
 	}
 
-	pub fn create_texture<'b>(&self, info: &'b TextureInfo<'b>) -> Texture {
+	pub fn create_texture<'b>(&self, info: TextureInfo<'b>) -> Texture {
 		Texture::create(self, info)
 	}
 }
