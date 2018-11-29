@@ -1,0 +1,52 @@
+[package]
+name = "villkiss"
+version = "0.1.0"
+authors = ["Clayton Breckel <cbrekcel@gmail.com>"]
+edition = "2018"
+
+[profile.dev]
+opt-level = 1
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+
+[dependencies]
+winit = "^0.18.0"
+cgmath = "^0.16.1"
+
+[features]
+default = []
+dx11 = ["gfx-backend-dx11"]
+dx12 = ["gfx-backend-dx12"]
+metal = ["gfx-backend-metal"]
+gl = ["gfx-backend-gl"]
+vulkan = ["gfx-backend-vulkan"]
+
+[dependencies.gfx-memory]
+path = "../gfx-memory"
+
+[dependencies.gfx-hal]
+git = "https://github.com/gfx-rs/gfx"
+
+[dependencies.gfx-backend-gl]
+git = "https://github.com/gfx-rs/gfx"
+features = ["glutin"]
+optional = true
+
+[dependencies.gfx-backend-vulkan]
+git = "https://github.com/gfx-rs/gfx"
+optional = true
+
+[target.'cfg(any(target_os = "macos", all(target_os = "ios", target_arch = "aarch64")))'.dependencies.gfx-backend-metal]
+git = "https://github.com/gfx-rs/gfx"
+optional = true
+
+[target.'cfg(windows)'.dependencies.gfx-backend-dx12]
+git = "https://github.com/gfx-rs/gfx"
+optional = true
+
+[target.'cfg(windows)'.dependencies.gfx-backend-dx11]
+git = "https://github.com/gfx-rs/gfx"
+optional = true
