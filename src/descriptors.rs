@@ -36,7 +36,6 @@ impl<'a> Descriptors<'a> {
 			buf
 		};
 
-		println!("Sets: {}", &descriptor_sets.len());
 		Descriptors {
 			data: data,
 			descriptor_pool: MaybeUninit::new(descriptor_pool),

@@ -55,7 +55,6 @@ impl<'a> Shader<'a> {
 		let (desc_layout, layout_bindings, pipe_layout) = {
 			let layout_bindings = uniforms.iter().enumerate().map(|(binding, info)| {
 				let binding = binding as DescriptorBinding;
-				println!("Descriptor binding: {}, type: {:?}", binding, info.uniform_type);
 				DescriptorSetLayoutBinding {
 					binding,
 					ty: info.uniform_type,

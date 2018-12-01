@@ -43,6 +43,7 @@ impl<'a> Pipeline<'a> {
 				fun: Comparison::Less,
 				write: true
 			},
+//			depth: DepthTest::Off,
 			depth_bounds: false,
 			stencil: StencilTest::Off
 		};

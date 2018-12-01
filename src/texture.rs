@@ -195,7 +195,7 @@ impl<'a> Texture<'a> {
 				)
 			} else if old == Layout::Undefined && new == Layout::DepthStencilAttachmentOptimal {
 				(
-					Aspects::DEPTH,
+					Aspects::DEPTH | Aspects::STENCIL,
 					Access::empty(),
 					PipelineStage::TOP_OF_PIPE,
 					Access::DEPTH_STENCIL_ATTACHMENT_READ | Access::DEPTH_STENCIL_ATTACHMENT_WRITE,
