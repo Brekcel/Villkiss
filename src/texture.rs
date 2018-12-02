@@ -41,7 +41,7 @@ pub struct TextureInfo<'a> {
 impl<'a> Texture<'a> {
 	pub(crate) fn create<'b>(pool: &'a BufferPool, info: TextureInfo<'b>) -> Texture<'a> {
 		println!("Creating Texture");
-		let data = pool.data;
+		let data = &pool.data;
 		let device = &data.device;
 		let extent = info.kind.extent();
 

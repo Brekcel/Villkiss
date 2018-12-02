@@ -3,16 +3,16 @@ use std::{cell::RefCell, mem::MaybeUninit};
 use gfx_hal::{command::{CommandBuffer}, pso::PipelineStage,	Device, Graphics, Submission,
 	pool::{CommandPool as HAL_CommandPool, CommandPoolCreateFlags}};
 
-use crate::{HALData, Semaphore, Fence, util::TakeExt};
+use crate::{HALData, Semaphore, BufferPool, Fence, util::TakeExt};
 use crate::gfx_back::Backend;
 
 pub struct CommandPool<'a> {
-	data: &'a HALData,
-	pool: MaybeUninit<RefCell<HAL_CommandPool<Backend, Graphics>>>,
+	pub(crate) data: &'a HALData,
+	pub(crate) pool: MaybeUninit<RefCell<HAL_CommandPool<Backend, Graphics>>>,
 }
 
 impl<'a> CommandPool<'a> {
-	pub fn create<'b: 'a>(data: &'b HALData) -> CommandPool<'a> {
+	pub(crate) fn create(data: &HALData) -> CommandPool {
 		println!("Creating Commandpool");
 		let flags: CommandPoolCreateFlags = CommandPoolCreateFlags::empty();
 		const MAX_BUFS: usize = 16;
@@ -37,6 +37,11 @@ impl<'a> CommandPool<'a> {
 			.signal(&signal_sems)
 			.submit(vec![finished]);
 		self.data.submit(submission, fence);
+	}
+
+
+	pub fn create_bufferpool(&self) -> BufferPool {
+		BufferPool::create(self)
 	}
 
 	pub fn reset(&self) {

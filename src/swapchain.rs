@@ -1,13 +1,13 @@
-use std::mem::MaybeUninit;
+use std::{cell::RefCell, mem::MaybeUninit};
 
 use gfx_hal::{
     format::{Aspects, ChannelType, Format},
-    image::Extent,
+    image::{Extent, Kind},
     window::Extent2D,
-    AcquireError, Backbuffer, Device, FrameSync, PresentMode, Surface, SwapchainConfig,
+    AcquireError, Backbuffer, Device, FrameSync, PresentMode, Surface, Swapchain as HALSwapchain, SwapchainConfig,
 };
 //#[cfg(not(feature = "gl"))]
-use gfx_hal::image::{Kind, ViewKind};
+use gfx_hal::image::ViewKind;
 //#[cfg(not(feature = "gl"))]
 use crate::ImageView;
 
@@ -15,13 +15,13 @@ use crate::gfx_back::Backend;
 use crate::util::TakeExt;
 use crate::{
     texture::{Texture, TextureInfo},
-    BufferPool, HALData, Semaphore,
+    BufferPool, HALData, RenderPass, Semaphore,
 };
 
 pub struct Swapchain<'a> {
     pub(crate) data: &'a HALData,
     pub(crate) dims: Extent,
-    pub(crate) swapchain: MaybeUninit<<Backend as gfx_hal::Backend>::Swapchain>,
+    pub(crate) swapchain: MaybeUninit<RefCell<<Backend as gfx_hal::Backend>::Swapchain>>,
     pub(crate) backbuffer: Backbuffer<Backend>,
     //	#[cfg(not(feature = "gl"))]
     pub(crate) image_views: Vec<ImageView<'a>>,
@@ -31,9 +31,8 @@ pub struct Swapchain<'a> {
 }
 
 impl<'a> Swapchain<'a> {
-    pub fn create(buf_pool: &'a BufferPool) -> Swapchain<'a> {
+    pub(crate) fn create<'b>(data: &'a HALData, pool: &'a BufferPool<'a>) -> Swapchain<'a> {
         println!("Creating Swapchain");
-        let data = &buf_pool.data;
         let device = &data.device;
         let (capabilities, formats, _) = data
             .surface
@@ -59,7 +58,7 @@ impl<'a> Swapchain<'a> {
         let (swapchain, backbuffer) = device
             .create_swapchain(&mut data.surface.borrow_mut(), swap_config, None)
             .unwrap();
-        let depth_tex = buf_pool.create_texture(TextureInfo {
+        let depth_tex = pool.create_texture(TextureInfo {
             kind: Kind::D2(dims.width, dims.height, 1, 1),
             format: Format::D32FloatS8Uint,
             mip_levels: 0,
@@ -84,7 +83,7 @@ impl<'a> Swapchain<'a> {
         Swapchain {
             data,
             dims,
-            swapchain: MaybeUninit::new(swapchain),
+            swapchain: MaybeUninit::new(RefCell::new(swapchain)),
             backbuffer,
             //			#[cfg(not(feature = "gl"))]
             image_views,
@@ -94,11 +93,9 @@ impl<'a> Swapchain<'a> {
         }
     }
 
-    pub fn acquire_next_image<'b>(
-        &'b mut self,
-        sem: &'b mut Semaphore,
-    ) -> Result<u32, AcquireError> {
-        (unsafe { self.swapchain.get_mut() } as &mut gfx_hal::Swapchain<Backend>)
+    pub fn acquire_next_image<'b>(&'b self, sem: &'b mut Semaphore) -> Result<u32, AcquireError> {
+        unsafe { self.swapchain.get_ref() }
+            .borrow_mut()
             .acquire_image(!0, FrameSync::Semaphore(sem.semaphore()))
     }
 
@@ -113,13 +110,17 @@ impl<'a> Swapchain<'a> {
     pub fn dims(&self) -> &Extent {
         &self.dims
     }
+
+    pub fn create_renderpass(&self) -> RenderPass {
+        RenderPass::create(self)
+    }
 }
 
 impl<'a> Drop for Swapchain<'a> {
     fn drop(&mut self) {
         let device = &self.data.device;
         //		#[cfg(not(feature = "gl"))]
-        device.destroy_swapchain(MaybeUninit::take(&mut self.swapchain));
+        device.destroy_swapchain(RefCell::into_inner(MaybeUninit::take(&mut self.swapchain)));
         println!("Dropped Swapchain");
     }
 }

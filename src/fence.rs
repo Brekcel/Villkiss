@@ -12,7 +12,7 @@ pub struct Fence<'a> {
 }
 
 impl<'a> Fence<'a> {
-	pub fn create(data: &'a HALData) -> Fence<'a> {
+	pub(crate) fn create(data: &'a HALData) -> Fence<'a> {
 		println!("Creating Fence");
 		let fence = data.device.create_fence(true).unwrap();
 		Fence {

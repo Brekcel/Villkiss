@@ -11,7 +11,7 @@ pub struct Semaphore<'a> {
 }
 
 impl<'a> Semaphore<'a> {
-	pub fn create(data: &'a HALData) -> Semaphore<'a> {
+	pub(crate) fn create(data: &'a HALData) -> Semaphore<'a> {
 		println!("Creating Semaphore");
 		let semaphore = data.device.create_semaphore().unwrap();
 		Semaphore {
@@ -20,7 +20,7 @@ impl<'a> Semaphore<'a> {
 		}
 	}
 
-	pub fn create_n(data: &'a HALData, num: usize) -> Box<[Semaphore<'a>]> {
+	pub(crate) fn create_n(data: &'a HALData, num: usize) -> Box<[Semaphore<'a>]> {
 		(0..num).map(|_| Self::create(data)).collect::<Vec<_>>().into_boxed_slice()
 	}
 

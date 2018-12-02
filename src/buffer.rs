@@ -1,29 +1,16 @@
-use core::ops::Range;
-use std::{
-    cell::RefCell,
-    mem::{size_of, MaybeUninit},
-};
+use std::mem::{size_of, MaybeUninit};
 
 use gfx_hal::{
     buffer::{self, Usage},
     command::BufferCopy,
-    format::Format,
     memory::Properties,
-    Device, PhysicalDevice,
+    Device,
 };
 use gfx_memory::{Block, MemoryAllocator, SmartAllocator, Type};
 
 use crate::gfx_back::Backend;
-use crate::texture::{Texture, TextureInfo};
 use crate::util::TakeExt;
-use crate::{CommandPool, HALData};
-
-pub struct BufferPool<'a> {
-    pub(crate) data: &'a HALData,
-    pub(crate) command_pool: &'a CommandPool<'a>,
-    pub(crate) allocator: MaybeUninit<RefCell<SmartAllocator<Backend>>>,
-    pub(crate) staging_buf: MaybeUninit<StagingBuffer>,
-}
+use crate::BufferPool;
 
 pub struct Buffer<'a> {
     parent: &'a BufferPool<'a>,
@@ -33,35 +20,14 @@ pub struct Buffer<'a> {
     props: Properties,
 }
 
-pub struct BufferView<'a> {
-    data: &'a HALData,
-    view: MaybeUninit<<Backend as gfx_hal::Backend>::BufferView>,
-}
+//pub struct BufferView<'a> {
+//    data: &'a HALData,
+//    view: MaybeUninit<<Backend as gfx_hal::Backend>::BufferView>,
+//}
 
-//DUMB Storage struct. HAS to be manually dropped.
-pub(crate) struct StagingBuffer {
-    pub(crate) block: <SmartAllocator<Backend> as MemoryAllocator<Backend>>::Block,
-    pub(crate) buffer: <Backend as gfx_hal::Backend>::Buffer,
-}
-
-impl<'a> BufferPool<'a> {
-    pub fn create(data: &'a HALData, command_pool: &'a CommandPool) -> BufferPool<'a> {
-        println!("Creating BufferPool");
-        let device = &data.device;
-        let phys_device = &data.adapter.physical_device;
-        let mut allocator =
-            SmartAllocator::new(phys_device.memory_properties(), 4096, 8, 64, 134217728);
-        let staging_buf = StagingBuffer::create(data, &mut allocator);
-        BufferPool {
-            data,
-            command_pool,
-            allocator: MaybeUninit::new(RefCell::new(allocator)),
-            staging_buf: MaybeUninit::new(staging_buf),
-        }
-    }
-
-    pub fn create_buffer(&self, size: usize, usage: Usage, uses_staging: bool) -> Buffer {
-        let device = &self.data.device;
+impl<'a> Buffer<'a> {
+    pub fn create(pool: &'a BufferPool, size: usize, usage: Usage, uses_staging: bool) -> Buffer<'a> {
+        let device = &pool.data.device;
         let size = size as buffer::Offset;
         let (usage, props) = if uses_staging {
             (usage | Usage::TRANSFER_DST, Properties::DEVICE_LOCAL)
@@ -70,7 +36,7 @@ impl<'a> BufferPool<'a> {
         };
         let unbound_buf = device.create_buffer(size, usage).unwrap();
         let reqs = device.get_buffer_requirements(&unbound_buf);
-        let block = unsafe { self.allocator.get_ref() }
+        let block = unsafe { pool.allocator.get_ref() }
             .borrow_mut()
             .alloc(device, (Type::General, props), reqs)
             .unwrap();
@@ -79,7 +45,7 @@ impl<'a> BufferPool<'a> {
             .unwrap();
 
         Buffer {
-            parent: self,
+            parent: pool,
             block: MaybeUninit::new(block),
             buffer: MaybeUninit::new(buffer),
             usage,
@@ -87,72 +53,6 @@ impl<'a> BufferPool<'a> {
         }
     }
 
-    pub fn create_texture<'b>(&self, info: TextureInfo<'b>) -> Texture {
-        Texture::create(self, info)
-    }
-}
-
-impl<'a> Drop for BufferPool<'a> {
-    fn drop(&mut self) {
-        let device = &self.data.device;
-        MaybeUninit::take(&mut self.staging_buf).manual_drop(
-            &self.data,
-            &mut unsafe { self.allocator.get_ref() }.borrow_mut(),
-        );
-        RefCell::into_inner(MaybeUninit::take(&mut self.allocator))
-            .dispose(&device)
-            .unwrap();
-        println!("Dropped BufferPool");
-    }
-}
-
-// 16 Megabytes
-//2usize.pow(26)
-const STAGING_BUF_SIZE: usize = 67108864;
-
-impl StagingBuffer {
-    fn create(data: &HALData, allocator: &mut SmartAllocator<Backend>) -> StagingBuffer {
-        println!("Creating StagingBuffer");
-        let device = &data.device;
-        let unbound_buf = device
-            .create_buffer(STAGING_BUF_SIZE as buffer::Offset, Usage::TRANSFER_SRC)
-            .unwrap();
-        let reqs = device.get_buffer_requirements(&unbound_buf);
-        let block = allocator
-            .alloc(
-                device,
-                (
-                    Type::General,
-                    Properties::CPU_VISIBLE | Properties::COHERENT,
-                ),
-                reqs,
-            )
-            .unwrap();
-        let buffer = device
-            .bind_buffer_memory(block.memory(), block.range().start, unbound_buf)
-            .unwrap();
-
-        StagingBuffer { block, buffer }
-    }
-
-    pub(crate) fn upload<T>(&self, data: &[T], device: &<Backend as gfx_hal::Backend>::Device) {
-        Buffer::do_upload(
-            data,
-            self.block.range().start as usize,
-            device,
-            self.block.memory(),
-        )
-    }
-
-    fn manual_drop(self, data: &HALData, alloc: &mut SmartAllocator<Backend>) {
-        let device = &data.device;
-        device.destroy_buffer(self.buffer);
-        alloc.free(device, self.block);
-        println!("Dropped StagingBuffer");
-    }
-}
-
-impl<'a> Buffer<'a> {
     pub fn upload<T>(&self, data: &[T], offset: usize) {
         let device = &self.parent.data.device;
         println!("Uploading buffer");
@@ -164,7 +64,7 @@ impl<'a> Buffer<'a> {
         }
     }
 
-    fn do_upload<T>(
+    pub(crate) fn do_upload<T>(
         data: &[T],
         offset: usize,
         device: &<Backend as gfx_hal::Backend>::Device,
@@ -205,18 +105,18 @@ impl<'a> Buffer<'a> {
         unsafe { self.buffer.get_ref() }
     }
 
-    pub fn buffer_view(&self, format: Option<Format>, range: Range<usize>) -> BufferView {
-        let data = &self.parent.data;
-        let device = &data.device;
-        let range = range.start as u64..range.end as u64;
-        let view = device
-            .create_buffer_view(self.buffer(), format, range)
-            .unwrap();
-        BufferView {
-            data,
-            view: MaybeUninit::new(view),
-        }
-    }
+    //    pub fn buffer_view(&self, format: Option<Format>, range: Range<usize>) -> BufferView {
+    //        let data = &self.parent.data;
+    //        let device = &data.device;
+    //        let range = range.start as u64..range.end as u64;
+    //        let view = device
+    //            .create_buffer_view(self.buffer(), format, range)
+    //            .unwrap();
+    //        BufferView {
+    //            data,
+    //            view: MaybeUninit::new(view),
+    //        }
+    //    }
 }
 
 impl<'a> Drop for Buffer<'a> {
@@ -230,15 +130,15 @@ impl<'a> Drop for Buffer<'a> {
     }
 }
 
-impl<'a> BufferView<'a> {
-    pub fn buffer_view(&self) -> &<Backend as gfx_hal::Backend>::BufferView {
-        unsafe { self.view.get_ref() }
-    }
-}
-
-impl<'a> Drop for BufferView<'a> {
-    fn drop(&mut self) {
-        let device = &self.data.device;
-        device.destroy_buffer_view(MaybeUninit::take(&mut self.view));
-    }
-}
+//impl<'a> BufferView<'a> {
+//    pub fn buffer_view(&self) -> &<Backend as gfx_hal::Backend>::BufferView {
+//        unsafe { self.view.get_ref() }
+//    }
+//}
+//
+//impl<'a> Drop for BufferView<'a> {
+//    fn drop(&mut self) {
+//        let device = &self.data.device;
+//        device.destroy_buffer_view(MaybeUninit::take(&mut self.view));
+//    }
+//}
