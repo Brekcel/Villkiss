@@ -1,4 +1,4 @@
-use std::mem::MaybeUninit;
+use std::{iter::once, mem::MaybeUninit};
 
 use gfx_hal::{
     pso::{Descriptor, DescriptorPool, DescriptorRangeDesc, DescriptorSetWrite},
@@ -6,8 +6,8 @@ use gfx_hal::{
 };
 
 use crate::gfx_back::Backend;
+use crate::shader::Shader;
 use crate::util::TakeExt;
-use crate::{shader::Shader};
 
 pub struct Descriptors<'a> {
     shader: &'a Shader<'a>,
@@ -18,6 +18,7 @@ pub struct Descriptors<'a> {
 impl<'a> Descriptors<'a> {
     pub(crate) fn create(shader: &'a Shader<'a>, pool_count: usize) -> Descriptors<'a> {
         println!("Creating Descriptors");
+        println!("Pool_count: {}", pool_count);
         let device = &shader.data.device;
         let desc_layout = shader.desc_layout();
         let mut descriptor_pool = {
@@ -27,8 +28,7 @@ impl<'a> Descriptors<'a> {
                 .map(|uniform| DescriptorRangeDesc {
                     ty: uniform.ty,
                     count: pool_count,
-                })
-                .collect::<Vec<_>>();
+                });
             device
                 .create_descriptor_pool(pool_count, descriptors)
                 .unwrap()
@@ -36,6 +36,7 @@ impl<'a> Descriptors<'a> {
 
         let descriptor_sets = {
             let mut buf = Vec::with_capacity(pool_count);
+
             descriptor_pool
                 .allocate_sets(vec![desc_layout; pool_count], &mut buf)
                 .unwrap();
@@ -49,15 +50,15 @@ impl<'a> Descriptors<'a> {
         }
     }
 
-    pub fn write(&self, set: usize, binding: usize, descriptor: Descriptor<Backend>) {
+    pub fn write(&self, set: usize, descriptor: &[Descriptor<Backend>]) {
         let device = &self.shader.data.device;
-        let writer = DescriptorSetWrite {
-            set: &self.descriptor_sets[set],
+        let writes = descriptor.iter().enumerate().map(|(binding, desc)|DescriptorSetWrite {
+            set: self.descriptor_set(set),
             binding: binding as u32,
             array_offset: 0,
-            descriptors: vec![descriptor],
-        };
-        device.write_descriptor_sets(vec![writer])
+            descriptors: once(desc),
+        });
+        device.write_descriptor_sets(writes)
     }
 
     pub fn descriptor_set(&self, idx: usize) -> &<Backend as gfx_hal::Backend>::DescriptorSet {
