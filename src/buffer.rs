@@ -32,7 +32,7 @@ impl<'a> Buffer<'a> {
         let (usage, props) = if uses_staging {
             (usage | Usage::TRANSFER_DST, Properties::DEVICE_LOCAL)
         } else {
-            (usage, Properties::CPU_VISIBLE)
+            (usage, Properties::CPU_VISIBLE | Properties::COHERENT)
         };
         let unbound_buf = device.create_buffer(size, usage).unwrap();
         let reqs = device.get_buffer_requirements(&unbound_buf);
@@ -43,7 +43,6 @@ impl<'a> Buffer<'a> {
         let buffer = device
             .bind_buffer_memory(block.memory(), block.range().start, unbound_buf)
             .unwrap();
-
         Buffer {
             parent: pool,
             block: MaybeUninit::new(block),
@@ -57,7 +56,9 @@ impl<'a> Buffer<'a> {
         let device = &self.parent.data.device;
         println!("Uploading buffer");
         if self.props.contains(Properties::CPU_VISIBLE) {
-            let memory = unsafe { self.block.get_ref() }.memory();
+            let block = unsafe { self.block.get_ref() };
+            let offset = offset + block.range().start as usize;
+            let memory = block.memory();
             Self::do_upload(data, offset, device, memory)
         } else {
             self.staged_upload(data, offset)
@@ -75,14 +76,13 @@ impl<'a> Buffer<'a> {
         let offset = offset as buffer::Offset;
 
         let range = offset..offset + len;
+
         let map = device.map_memory(memory, range.clone()).unwrap();
 
         unsafe {
             std::ptr::copy_nonoverlapping(data.as_ptr(), map as *mut T, data.len());
         }
-        device
-            .flush_mapped_memory_ranges(vec![(memory, range)])
-            .unwrap();
+
         device.unmap_memory(memory);
     }
 
