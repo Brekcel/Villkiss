@@ -54,7 +54,6 @@ impl<'a> Buffer<'a> {
 
     pub fn upload<T>(&self, data: &[T], offset: usize) {
         let device = &self.parent.data.device;
-        println!("Uploading buffer");
         if self.props.contains(Properties::CPU_VISIBLE) {
             let block = unsafe { self.block.get_ref() };
             let offset = offset + block.range().start as usize;
@@ -96,7 +95,7 @@ impl<'a> Buffer<'a> {
             size: (data.len() * std::mem::size_of::<T>()) as buffer::Offset,
         };
         staged.upload(data, device);
-        pool.buffer(true, &[], &[], None, |buffer| {
+        pool.single_submit(true, &[], &[], None, |buffer| {
             buffer.copy_buffer(&staged.buffer, self.buffer(), &[range]);
         });
     }

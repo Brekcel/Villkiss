@@ -33,7 +33,6 @@ impl<'a> Fence<'a> {
 	pub fn wait(&self) {
 		let fence = self.fence();
 		self.data.device.wait_for_fence(fence, !0).unwrap();
-		self.reset();
 	}
 
 	pub fn fence(&self) -> &<Backend as gfx_hal::Backend>::Fence {

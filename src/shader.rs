@@ -1,4 +1,5 @@
 use std::mem::MaybeUninit;
+use core::ops::Range;
 
 use gfx_hal::{
     format::Format,
@@ -45,6 +46,11 @@ pub struct UniformInfo {
     pub mutable: bool,
 }
 
+pub struct PushConstantInfo {
+    pub stage: ShaderStageFlags,
+    pub range: Range<u32>,
+}
+
 impl<'a> Shader<'a> {
     pub(crate) fn create<'b>(
         data: &'a HALData,
@@ -52,6 +58,7 @@ impl<'a> Shader<'a> {
         frag: &'b [u8],
         vertices: &'b [VertexInfo],
         uniforms: &'b [UniformInfo],
+        push_constants: &'b [PushConstantInfo],
     ) -> Shader<'a> {
         println!("Creating Shader");
         let device = &data.device;
@@ -73,11 +80,12 @@ impl<'a> Shader<'a> {
                     }
                 })
                 .collect::<Vec<DescriptorSetLayoutBinding>>();
+            let pc = push_constants.iter().map(|pci| (pci.stage, pci.range.clone()));
             let desc_layout = device
                 .create_descriptor_set_layout(&layout_bindings, &[])
                 .unwrap();
             let pipe_layout = device
-                .create_pipeline_layout(vec![&desc_layout], &[])
+                .create_pipeline_layout(vec![&desc_layout], pc)
                 .unwrap();
             (desc_layout, layout_bindings, pipe_layout)
         };

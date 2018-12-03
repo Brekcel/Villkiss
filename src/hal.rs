@@ -71,8 +71,9 @@ impl<'a> HALData {
         frag: &'b [u8],
         vertices: &'b [VertexInfo],
         uniforms: &'b [UniformInfo],
+        push_constants: &'b [PushConstantInfo],
     ) -> Shader<'a> {
-        Shader::create(self, vert, frag, vertices, uniforms)
+        Shader::create(self, vert, frag, vertices, uniforms, push_constants)
     }
 
     pub fn create_command_pool(&self) -> CommandPool {
@@ -111,7 +112,7 @@ impl<'a> HALData {
         &self,
         swap: &Swapchain,
         frame_idx: u32,
-        present_sems: Vec<&Semaphore>,
+        present_sems: &[&Semaphore],
     ) -> Result<(), ()> {
         let queue = &mut self.queue_group.borrow_mut().queues[0];
         let swap = unsafe { swap.swapchain.get_ref() }.borrow();

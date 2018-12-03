@@ -30,7 +30,6 @@ impl<'a> Pipeline<'a> {
 
         println!("Creating Pipeline");
         let device = &pass.swapchain.data.device;
-//        let pool_count = swapchain.image_count();
         let shad_set = shader.make_set();
         let pipe_layout = shader.pipe_layout();
         let desc_layout = shader.desc_layout();
