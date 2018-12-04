@@ -22,12 +22,13 @@ impl<'a> ImageView<'a> {
 		format: Format,
 		kind: ViewKind,
 		aspects: Aspects,
+		mip_levels: u8
 	) -> ImageView<'a> {
 		println!("Creating ImageView");
 		let device = &data.device;
 		let sub_range = SubresourceRange {
 			aspects: aspects,
-			levels: 0..1,
+			levels: 0..mip_levels,
 			layers: 0..1,
 		};
 		let view = device

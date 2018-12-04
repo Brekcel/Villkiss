@@ -1,8 +1,8 @@
-use std::mem::MaybeUninit;
+use std::{iter::once, mem::MaybeUninit};
 
 use gfx_hal::{
     self,
-    command::BufferImageCopy,
+    command::{BufferImageCopy, ImageBlit},
     format::{Aspects, Format},
     image::{
         Access, Anisotropic, Filter, Kind, Layout, Offset, PackedColor, SamplerInfo,
@@ -31,10 +31,35 @@ pub struct Texture<'a> {
     pub(crate) sampler: Option<Sampler<'a>>,
 }
 
+#[derive(Copy, Clone)]
+pub enum MipMaps {
+    PreExisting(u8),
+    Generate,
+    None,
+}
+
+impl MipMaps {
+    fn levels(&self, info: TextureInfo) -> u8 {
+        match self {
+            MipMaps::PreExisting(i) => *i,
+            MipMaps::None => 1,
+            MipMaps::Generate => {
+                f32::log(
+                    u32::max(info.kind.extent().width, info.kind.extent().height) as f32,
+                    2f32,
+                )
+                .floor() as u8
+                    + 1
+            }
+        }
+    }
+}
+
+#[derive(Copy, Clone)]
 pub struct TextureInfo<'a> {
     pub kind: Kind,
     pub format: Format,
-    pub mip_levels: u8,
+    pub mipmaps: MipMaps,
     pub pixels: Option<&'a [u8]>,
 }
 
@@ -45,8 +70,13 @@ impl<'a> Texture<'a> {
         let device = &data.device;
         let extent = info.kind.extent();
 
+        let mip_levels = info.mipmaps.levels(info);
         let (usage, aspects, sampler) = if info.pixels.is_some() {
-            let usage = Usage::TRANSFER_DST | Usage::SAMPLED;
+            let mut usage = Usage::TRANSFER_DST | Usage::SAMPLED;
+            match info.mipmaps {
+                MipMaps::Generate => usage |= Usage::TRANSFER_SRC,
+                _ => (),
+            }
             let aspects = Aspects::COLOR;
             let sampler = Some(Sampler::create(
                 data,
@@ -56,7 +86,7 @@ impl<'a> Texture<'a> {
                     mip_filter: Filter::Linear,
                     wrap_mode: (WrapMode::Tile, WrapMode::Tile, WrapMode::Tile),
                     lod_bias: 0f32.into(),
-                    lod_range: 0f32.into()..0f32.into(),
+                    lod_range: 0f32.into()..((mip_levels as f32) / 8f32).into(),
                     comparison: None,
                     border: PackedColor(0x0),
                     anisotropic: Anisotropic::On(16),
@@ -71,7 +101,6 @@ impl<'a> Texture<'a> {
         };
 
         let (image, block) = Texture::image_block(pool, &info, usage);
-
         info.pixels.map_or_else(
             || {
                 pool.command_pool
@@ -79,6 +108,7 @@ impl<'a> Texture<'a> {
                         Self::transition_image_layout(
                             cmd_buf,
                             &image,
+                            0,
                             Layout::Undefined,
                             Layout::DepthStencilAttachmentOptimal,
                         );
@@ -89,39 +119,51 @@ impl<'a> Texture<'a> {
                 staged.upload(pixels, device);
                 pool.command_pool
                     .single_submit(false, &[], &[], None, |cmd_buf| {
-                        let copy = BufferImageCopy {
-                            buffer_offset: 0,
-                            buffer_width: 0,
-                            buffer_height: 0,
-                            image_layers: SubresourceLayers {
-                                aspects: Aspects::COLOR,
-                                level: 0,
-                                layers: 0..1,
-                            },
-                            image_offset: Offset::ZERO,
-                            image_extent: extent,
+                        let range = match info.mipmaps {
+                            MipMaps::PreExisting(i) => 0..i,
+                            _ => 0..1,
                         };
-                        Self::transition_image_layout(
-                            cmd_buf,
-                            &image,
-                            Layout::Undefined,
-                            Layout::TransferDstOptimal,
-                        );
-                        cmd_buf.copy_buffer_to_image(
-                            &staged.buffer,
-                            &image,
-                            Layout::TransferDstOptimal,
-                            vec![copy],
-                        );
-                        Self::transition_image_layout(
-                            cmd_buf,
-                            &image,
-                            Layout::TransferDstOptimal,
-                            Layout::ShaderReadOnlyOptimal,
-                        );
+                        for level in range {
+                            let copy = BufferImageCopy {
+                                buffer_offset: 0,
+                                buffer_width: 0,
+                                buffer_height: 0,
+                                image_layers: SubresourceLayers {
+                                    aspects: Aspects::COLOR,
+                                    level,
+                                    layers: 0..1,
+                                },
+                                image_offset: Offset::ZERO,
+                                image_extent: extent,
+                            };
+                            Self::transition_image_layout(
+                                cmd_buf,
+                                &image,
+                                level,
+                                Layout::Undefined,
+                                Layout::TransferDstOptimal,
+                            );
+                            cmd_buf.copy_buffer_to_image(
+                                &staged.buffer,
+                                &image,
+                                Layout::TransferDstOptimal,
+                                vec![copy],
+                            );
+                            Self::transition_image_layout(
+                                cmd_buf,
+                                &image,
+                                level,
+                                Layout::TransferDstOptimal,
+                                Layout::ShaderReadOnlyOptimal,
+                            );
+                        }
                     });
             },
         );
+        match info.mipmaps {
+            MipMaps::Generate => Self::gen_mipmaps(&image, &pool, info),
+            _ => (),
+        }
 
         let kind = match info.kind {
             Kind::D1(_, _) => ViewKind::D1,
@@ -129,7 +171,7 @@ impl<'a> Texture<'a> {
             Kind::D3(_, _, _) => ViewKind::D3,
         };
 
-        let view = ImageView::create(data, &image, info.format, kind, aspects);
+        let view = ImageView::create(data, &image, info.format, kind, aspects, mip_levels);
 
         Texture {
             pool,
@@ -151,10 +193,11 @@ impl<'a> Texture<'a> {
         <SmartAllocator<Backend> as MemoryAllocator<Backend>>::Block,
     ) {
         let device = &pool.data.device;
+        let mips = info.mipmaps.levels(*info);
         let unbound_image = device
             .create_image(
                 info.kind,
-                1,
+                mips,
                 info.format,
                 Tiling::Optimal,
                 usage,
@@ -172,9 +215,110 @@ impl<'a> Texture<'a> {
         (image, block)
     }
 
+    fn gen_mipmaps(
+        image: &<Backend as gfx_hal::Backend>::Image,
+        pool: &BufferPool,
+        info: TextureInfo,
+    ) {
+        pool.command_pool
+            .single_submit(false, &[], &[], None, |buffer| {
+                let (mut width, mut height) = {
+                    let extent = info.kind.extent();
+                    (extent.width, extent.height)
+                };
+                let levels = info.mipmaps.levels(info);
+                println!("Mipmap levels: {}", levels);
+                for i in 1..levels {
+                    let level = i - 1;
+                    let init_barrier = Barrier::Image {
+                        states: (Access::TRANSFER_WRITE, Layout::TransferDstOptimal)
+                            ..(Access::TRANSFER_READ, Layout::TransferSrcOptimal),
+                        target: image,
+                        range: SubresourceRange {
+                            aspects: Aspects::COLOR,
+                            levels: level..(level + 1),
+                            layers: 0..1,
+                        },
+                    };
+                    buffer.pipeline_barrier(
+                        PipelineStage::TRANSFER..PipelineStage::TRANSFER,
+                        Dependencies::empty(),
+                        once(init_barrier),
+                    );
+                    let blit = ImageBlit {
+                        src_subresource: SubresourceLayers {
+                            aspects: Aspects::COLOR,
+                            level: i - 1,
+                            layers: 0..1,
+                        },
+                        src_bounds: Offset { x: 0, y: 0, z: 0 }..Offset {
+                            x: width as i32,
+                            y: height as i32,
+                            z: 1,
+                        },
+                        dst_subresource: SubresourceLayers {
+                            aspects: Aspects::COLOR,
+                            level: i,
+                            layers: 0..1,
+                        },
+                        dst_bounds: Offset { x: 0, y: 0, z: 0 }..Offset {
+                            x: if width > 1 { width / 2 } else { 1 } as i32,
+                            y: if height > 1 { height / 2 } else { 1 } as i32,
+                            z: 1,
+                        },
+                    };
+                    buffer.blit_image(
+                        image,
+                        Layout::TransferSrcOptimal,
+                        image,
+                        Layout::TransferDstOptimal,
+                        Filter::Linear,
+                        once(blit),
+                    );
+                    let fin_barrier = Barrier::Image {
+                        states: (Access::TRANSFER_READ, Layout::TransferSrcOptimal)
+                            ..(Access::SHADER_READ, Layout::ShaderReadOnlyOptimal),
+                        target: image,
+                        range: SubresourceRange {
+                            aspects: Aspects::COLOR,
+                            levels: level..(level + 1),
+                            layers: 0..1,
+                        },
+                    };
+                    buffer.pipeline_barrier(
+                        PipelineStage::TRANSFER..PipelineStage::FRAGMENT_SHADER,
+                        Dependencies::empty(),
+                        once(fin_barrier),
+                    );
+                    if width > 1 {
+                        width /= 2;
+                    }
+                    if height > 1 {
+                        height /= 2;
+                    }
+                }
+                let fin_barrier = Barrier::Image {
+                    states: (Access::TRANSFER_READ, Layout::TransferSrcOptimal)
+                        ..(Access::SHADER_READ, Layout::ShaderReadOnlyOptimal),
+                    target: image,
+                    range: SubresourceRange {
+                        aspects: Aspects::COLOR,
+                        levels: levels - 1..levels,
+                        layers: 0..1,
+                    },
+                };
+                buffer.pipeline_barrier(
+                    PipelineStage::TRANSFER..PipelineStage::FRAGMENT_SHADER,
+                    Dependencies::empty(),
+                    once(fin_barrier),
+                );
+            })
+    }
+
     fn transition_image_layout(
         cmd_buf: &mut gfx_hal::command::CommandBuffer<Backend, Graphics>,
         image: &<Backend as gfx_hal::Backend>::Image,
+        levels: u8,
         old: Layout,
         new: Layout,
     ) {
@@ -211,7 +355,7 @@ impl<'a> Texture<'a> {
             target: image,
             range: SubresourceRange {
                 aspects: aspects,
-                levels: 0..1,
+                levels: levels..levels + 1,
                 layers: 0..1,
             },
         };
@@ -256,6 +400,7 @@ impl<'a> Drop for Texture<'a> {
                 Self::transition_image_layout(
                     cmd_buf,
                     &img,
+                    1,
                     Layout::TransferDstOptimal,
                     Layout::ShaderReadOnlyOptimal,
                 );

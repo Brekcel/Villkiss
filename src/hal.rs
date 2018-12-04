@@ -101,7 +101,10 @@ impl<'a> HALData {
     }
 
     pub fn submit(&self, sub: Submission<Backend, Graphics>, fence: Option<&Fence>) {
-        let fence = fence.map(|f| f.fence());
+        let fence = fence.map(|f| {
+            f.reset();
+            f.fence()
+        });
         self.queue_group.borrow_mut().queues[0].submit(sub, fence);
         if fence.is_none() {
             self.queue_group.borrow_mut().queues[0].wait_idle().unwrap();
