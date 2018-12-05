@@ -1,5 +1,4 @@
-use std::mem::MaybeUninit;
-use core::ops::Range;
+use std::{iter::once, marker::PhantomData, mem::MaybeUninit};
 
 use gfx_hal::{
     format::Format,
@@ -11,32 +10,38 @@ use gfx_hal::{
 };
 
 use crate::gfx_back::Backend;
-use crate::util::{GFXRes, TakeExt};
-use crate::{Descriptors, HALData};
+use crate::util::TakeExt;
+use crate::{BufferPool, Descriptors, HALData, Mesh};
 
-pub struct Shader<'a> {
+pub struct Shader<
+    'a,
+    Vertex: VertexInfo<Vertex>,
+    Uniforms: Uniform,
+    Index,
+    Constants: PushConstantInfo,
+> {
     pub(crate) data: &'a HALData,
     pub(crate) vert_mod: MaybeUninit<<Backend as gfx_hal::Backend>::ShaderModule>,
     pub(crate) frag_mod: MaybeUninit<<Backend as gfx_hal::Backend>::ShaderModule>,
-    pub(crate) vertex_descs: Vec<VertexBufferDesc>,
+    pub(crate) vertex_desc: VertexBufferDesc,
     pub(crate) attribute_descs: Vec<AttributeDesc>,
     pub(crate) layout_bindings: Vec<DescriptorSetLayoutBinding>,
     pub(crate) descriptor_layout: MaybeUninit<<Backend as gfx_hal::Backend>::DescriptorSetLayout>,
     pub(crate) pipeline_layout: MaybeUninit<<Backend as gfx_hal::Backend>::PipelineLayout>,
+    pub(crate) push_constant_stages: ShaderStageFlags,
+    vert_phantom: PhantomData<Vertex>,
+    uniforms_phantom: PhantomData<Uniforms>,
+    index_phantom: PhantomData<Index>,
+    constants_phantom: PhantomData<Constants>,
 }
 
-pub struct VertexInfo<'a> {
-    stride: u32,
-    attributes: &'a [Format],
+pub trait VertexInfo<T> {
+    const ATTRIBUTES: &'static [Format];
+    const STRIDE: u32 = std::mem::size_of::<T>() as u32;
 }
 
-impl<'a> VertexInfo<'a> {
-    pub fn create<T>(attributes: &'a [Format]) -> VertexInfo<'a> {
-        VertexInfo {
-            stride: std::mem::size_of::<T>() as u32,
-            attributes,
-        }
-    }
+pub trait Uniform {
+    const UNIFORMS: &'static [UniformInfo];
 }
 
 pub struct UniformInfo {
@@ -46,27 +51,30 @@ pub struct UniformInfo {
     pub mutable: bool,
 }
 
-pub struct PushConstantInfo {
-    pub stage: ShaderStageFlags,
-    pub range: Range<u32>,
+pub trait PushConstantInfo: Sized {
+    const STAGES: &'static [ShaderStageFlags];
+    const SIZE: u32 = std::mem::size_of::<Self>() as u32;
 }
 
-impl<'a> Shader<'a> {
+impl<'a, Vertex: VertexInfo<Vertex>, Uniforms: Uniform, Index, Constants: PushConstantInfo>
+    Shader<'a, Vertex, Uniforms, Index, Constants>
+{
     pub(crate) fn create<'b>(
         data: &'a HALData,
         vert: &'b [u8],
         frag: &'b [u8],
-        vertices: &'b [VertexInfo],
-        uniforms: &'b [UniformInfo],
-        push_constants: &'b [PushConstantInfo],
-    ) -> Shader<'a> {
+    ) -> Shader<'a, Vertex, Uniforms, Index, Constants> {
         println!("Creating Shader");
         let device = &data.device;
         let vert_mod = device.create_shader_module(vert).unwrap();
         let frag_mod = device.create_shader_module(frag).unwrap();
 
+        let push_constant_stages = Constants::STAGES
+            .iter()
+            .fold(ShaderStageFlags::empty(), |acc, flag| acc | *flag);
+
         let (desc_layout, layout_bindings, pipe_layout) = {
-            let layout_bindings = uniforms
+            let layout_bindings = Uniforms::UNIFORMS
                 .iter()
                 .enumerate()
                 .map(|(binding, info)| {
@@ -80,57 +88,72 @@ impl<'a> Shader<'a> {
                     }
                 })
                 .collect::<Vec<DescriptorSetLayoutBinding>>();
-            let pc = push_constants.iter().map(|pci| (pci.stage, pci.range.clone()));
+
             let desc_layout = device
                 .create_descriptor_set_layout(&layout_bindings, &[])
                 .unwrap();
             let pipe_layout = device
-                .create_pipeline_layout(vec![&desc_layout], pc)
+                .create_pipeline_layout(
+                    once(&desc_layout),
+                    once((push_constant_stages, 0..Constants::SIZE)),
+                )
                 .unwrap();
             (desc_layout, layout_bindings, pipe_layout)
         };
-        let (vertex_descs, attribute_descs) = {
-            let mut vertex_descs = Vec::with_capacity(vertices.len());
-            let mut attribute_descs = Vec::with_capacity(vertices.len() * 3);
-            vertices.iter().enumerate().for_each(|(binding, info)| {
-                let binding = binding as u32;
-                vertex_descs.push(VertexBufferDesc {
-                    binding,
-                    stride: info.stride,
-                    rate: 0,
-                });
-                let mut offset = 0;
-                info.attributes
-                    .iter()
-                    .enumerate()
-                    .for_each(|(location, format)| {
-                        let location = location as u32;
-                        attribute_descs.push(AttributeDesc {
-                            location,
-                            binding,
-                            element: Element {
-                                format: *format,
-                                offset,
-                            },
-                        });
-                        offset += (format.surface_desc().bits / 8) as u32;
-                    });
-            });
-            vertex_descs.shrink_to_fit();
-            attribute_descs.shrink_to_fit();
-            (vertex_descs, attribute_descs)
+
+
+        let vertex_desc = VertexBufferDesc {
+            binding: 0,
+            stride: Vertex::STRIDE,
+            rate: 0,
+        };
+
+        let attribute_descs = {
+            let mut offset = 0;
+            Vertex::ATTRIBUTES
+                .iter()
+                .enumerate()
+                .map(|(location, format)| {
+                    let location = location as u32;
+                    let attr = AttributeDesc {
+                        location,
+                        binding: 0,
+                        element: Element {
+                            format: *format,
+                            offset,
+                        },
+                    };
+                    offset += (format.surface_desc().bits / 8) as u32;
+                    attr
+                })
+                .collect::<Vec<_>>()
         };
 
         Shader {
             data,
             vert_mod: MaybeUninit::new(vert_mod),
             frag_mod: MaybeUninit::new(frag_mod),
-            vertex_descs,
+            vertex_desc,
             attribute_descs,
             layout_bindings,
             descriptor_layout: MaybeUninit::new(desc_layout),
             pipeline_layout: MaybeUninit::new(pipe_layout),
+            push_constant_stages,
+            vert_phantom: PhantomData,
+            uniforms_phantom: PhantomData,
+            index_phantom: PhantomData,
+            constants_phantom: PhantomData,
         }
+    }
+
+    pub fn create_mesh<F: Fn() -> Constants>(
+        &'a self,
+        pool: &'a BufferPool,
+        vertices: Vec<Vertex>,
+        indices: Vec<Index>,
+        push_constant_fn: F,
+    ) -> Mesh<'a, Vertex, Uniforms, Index, Constants, F> {
+        Mesh::create(self, pool, vertices, indices, push_constant_fn)
     }
 
     pub(crate) fn layout_bindings(&self) -> &[DescriptorSetLayoutBinding] {
@@ -150,13 +173,16 @@ impl<'a> Shader<'a> {
         verts: &mut Vec<VertexBufferDesc>,
         attrs: &mut Vec<AttributeDesc>,
     ) {
-        *verts = self.vertex_descs.clone();
+        verts.push(self.vertex_desc);
         *attrs = self.attribute_descs.clone();
     }
 
-	pub fn create_descriptors(&self, pool_count: usize) -> Descriptors {
-		Descriptors::create(self, pool_count)
-	}
+    pub fn create_descriptors(
+        &'a self,
+        pool_count: usize,
+    ) -> Descriptors<'a, Vertex, Uniforms, Index, Constants> {
+        Descriptors::create(self, pool_count)
+    }
 
     pub(crate) fn make_set<'b>(&'a self) -> GraphicsShaderSet<'b, Backend>
     where
@@ -184,9 +210,9 @@ impl<'a> Shader<'a> {
     }
 }
 
-impl<'a> GFXRes for Shader<'a> {}
-
-impl<'a> Drop for Shader<'a> {
+impl<'a, Vertex: VertexInfo<Vertex>, Uniforms: Uniform, Index, Constants: PushConstantInfo> Drop
+    for Shader<'a, Vertex, Uniforms, Index, Constants>
+{
     fn drop(&mut self) {
         let device = &self.data.device;
         device.destroy_shader_module(MaybeUninit::take(&mut self.vert_mod));

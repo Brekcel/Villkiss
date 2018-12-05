@@ -84,7 +84,7 @@ impl<'a> CommandPool<'a> {
 
     pub fn reset(&self) {
         self.bufs_used.set(0);
-        unsafe { self.pool.get_ref() }.borrow_mut().reset();
+//        unsafe { self.pool.get_ref() }.borrow_mut().reset();
     }
 
     fn incr_used(&self) {

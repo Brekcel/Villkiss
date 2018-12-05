@@ -46,7 +46,7 @@ impl<'a> BufferPool<'a> {
 		}
 	}
 
-	pub fn create_buffer(&self, size: usize, usage: Usage, uses_staging: bool) -> Buffer {
+	pub fn create_buffer(&self, size: u64, usage: Usage, uses_staging: bool) -> Buffer {
 		Buffer::create(self, size, usage, uses_staging)
 	}
 
@@ -56,7 +56,7 @@ impl<'a> BufferPool<'a> {
 		usage: Usage,
 		uses_staging: bool,
 	) -> Buffer {
-		let buf = self.create_buffer(size_of::<T>() * data.len(), usage, uses_staging);
+		let buf = self.create_buffer((size_of::<T>() * data.len()) as u64, usage, uses_staging);
 		buf.upload(data, 0);
 		buf
 	}
@@ -112,7 +112,7 @@ impl StagingBuffer {
 	pub(crate) fn upload<T>(&self, data: &[T], device: &<Backend as gfx_hal::Backend>::Device) {
 		Buffer::do_upload(
 			data,
-			self.block.range().start as usize,
+			self.block.range().start,
 			device,
 			self.block.memory(),
 		)

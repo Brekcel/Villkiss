@@ -35,6 +35,7 @@ pub use crate::descriptors::Descriptors;
 pub use crate::texture::Texture;
 pub use crate::imageview::ImageView;
 pub use crate::sampler::Sampler;
+pub use crate::mesh::Mesh;
 
 pub mod window;
 pub mod hal;
@@ -52,4 +53,5 @@ pub mod descriptors;
 pub mod texture;
 pub mod imageview;
 pub mod sampler;
+pub mod mesh;
 mod util;

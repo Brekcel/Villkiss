@@ -13,7 +13,7 @@ use gfx_hal::{
 
 use crate::gfx_back::Backend;
 use crate::util::TakeExt;
-use crate::{FrameBuffer, ImageView, Pipeline, Shader, Swapchain};
+use crate::{FrameBuffer, ImageView, Pipeline, shader::{Shader, VertexInfo, Uniform, PushConstantInfo}, Swapchain};
 
 pub struct RenderPass<'a> {
     pub(crate) swapchain: &'a Swapchain<'a>,
@@ -120,7 +120,7 @@ impl<'a> RenderPass<'a> {
         unsafe { self.pass.get_ref() }
     }
 
-    pub fn create_pipeline(&'a self, shader: &'a Shader) -> Pipeline<'a> {
+    pub fn create_pipeline<Vertex: VertexInfo<Vertex>, Uniforms: Uniform, Index, Constants: PushConstantInfo>(&'a self, shader: &'a Shader<'a, Vertex, Uniforms, Index, Constants>) -> Pipeline<'a> {
         Pipeline::create(self, shader)
     }
 }

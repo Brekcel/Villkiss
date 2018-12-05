@@ -26,7 +26,7 @@ pub struct Buffer<'a> {
 //}
 
 impl<'a> Buffer<'a> {
-    pub fn create(pool: &'a BufferPool, size: usize, usage: Usage, uses_staging: bool) -> Buffer<'a> {
+    pub fn create(pool: &'a BufferPool, size: u64, usage: Usage, uses_staging: bool) -> Buffer<'a> {
         let device = &pool.data.device;
         let size = size as buffer::Offset;
         let (usage, props) = if uses_staging {
@@ -52,11 +52,11 @@ impl<'a> Buffer<'a> {
         }
     }
 
-    pub fn upload<T>(&self, data: &[T], offset: usize) {
+    pub fn upload<T>(&self, data: &[T], offset: u64) {
         let device = &self.parent.data.device;
         if self.props.contains(Properties::CPU_VISIBLE) {
             let block = unsafe { self.block.get_ref() };
-            let offset = offset + block.range().start as usize;
+            let offset = offset + block.range().start;
             let memory = block.memory();
             Self::do_upload(data, offset, device, memory)
         } else {
@@ -66,7 +66,7 @@ impl<'a> Buffer<'a> {
 
     pub(crate) fn do_upload<T>(
         data: &[T],
-        offset: usize,
+        offset: u64,
         device: &<Backend as gfx_hal::Backend>::Device,
         memory: &<Backend as gfx_hal::Backend>::Memory,
     ) {
@@ -85,7 +85,7 @@ impl<'a> Buffer<'a> {
         device.unmap_memory(memory);
     }
 
-    fn staged_upload<T>(&self, data: &[T], offset: usize) {
+    fn staged_upload<T>(&self, data: &[T], offset: u64) {
         let device = &self.parent.data.device;
         let pool = &self.parent.command_pool;
         let staged = unsafe { self.parent.staging_buf.get_ref() };

@@ -394,17 +394,6 @@ impl<'a> Texture<'a> {
 impl<'a> Drop for Texture<'a> {
     fn drop(&mut self) {
         let img = MaybeUninit::take(&mut self.image);
-        self.pool
-            .command_pool
-            .single_submit(false, &[], &[], None, |cmd_buf| {
-                Self::transition_image_layout(
-                    cmd_buf,
-                    &img,
-                    1,
-                    Layout::TransferDstOptimal,
-                    Layout::ShaderReadOnlyOptimal,
-                );
-            });
         let device = &self.pool.data.device;
         unsafe { self.pool.allocator.get_ref() }
             .borrow_mut()

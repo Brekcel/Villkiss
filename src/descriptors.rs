@@ -6,17 +6,28 @@ use gfx_hal::{
 };
 
 use crate::gfx_back::Backend;
-use crate::shader::Shader;
+use crate::shader::{PushConstantInfo, Shader, Uniform, VertexInfo};
 use crate::util::TakeExt;
 
-pub struct Descriptors<'a> {
-    shader: &'a Shader<'a>,
+pub struct Descriptors<
+    'a,
+    Vertex: VertexInfo<Vertex>,
+    Uniforms: Uniform,
+    Index,
+    Constants: PushConstantInfo,
+> {
+    shader: &'a Shader<'a, Vertex, Uniforms, Index, Constants>,
     descriptor_pool: MaybeUninit<<Backend as gfx_hal::Backend>::DescriptorPool>,
     descriptor_sets: Vec<<Backend as gfx_hal::Backend>::DescriptorSet>,
 }
 
-impl<'a> Descriptors<'a> {
-    pub(crate) fn create(shader: &'a Shader<'a>, pool_count: usize) -> Descriptors<'a> {
+impl<'a, Vertex: VertexInfo<Vertex>, Uniforms: Uniform, Index, Constants: PushConstantInfo>
+    Descriptors<'a, Vertex, Uniforms, Index, Constants>
+{
+    pub(crate) fn create(
+        shader: &'a Shader<'a, Vertex, Uniforms, Index, Constants>,
+        pool_count: usize,
+    ) -> Descriptors<'a, Vertex, Uniforms, Index, Constants> {
         println!("Creating Descriptors");
         let device = &shader.data.device;
         let desc_layout = shader.desc_layout();
@@ -50,14 +61,15 @@ impl<'a> Descriptors<'a> {
 
     pub fn write(&self, set: usize, descriptor: &[Descriptor<Backend>]) {
         let device = &self.shader.data.device;
-        let writes = descriptor.iter().enumerate().map(|(binding, desc)| {
-            DescriptorSetWrite {
+        let writes = descriptor
+            .iter()
+            .enumerate()
+            .map(|(binding, desc)| DescriptorSetWrite {
                 set: self.descriptor_set(set),
                 binding: binding as u32,
                 array_offset: 0,
                 descriptors: once(desc),
-            }
-        });
+            });
         device.write_descriptor_sets(writes)
     }
 
@@ -66,11 +78,13 @@ impl<'a> Descriptors<'a> {
     }
 }
 
-impl<'a> Drop for Descriptors<'a> {
+impl<'a, Vertex: VertexInfo<Vertex>, Uniforms: Uniform, Index, Constants: PushConstantInfo> Drop
+    for Descriptors<'a, Vertex, Uniforms, Index, Constants>
+{
     fn drop(&mut self) {
         let device = &self.shader.data.device;
-        let mut pool = MaybeUninit::take(&mut self.descriptor_pool);
-        pool.free_sets(self.descriptor_sets.drain(..));
+        let pool = MaybeUninit::take(&mut self.descriptor_pool);
+//        pool.free_sets(self.descriptor_sets.drain(..));
         device.destroy_descriptor_pool(pool);
         println!("Dropped Descriptors");
     }
