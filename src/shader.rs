@@ -3,21 +3,22 @@ use std::{iter::once, marker::PhantomData, mem::MaybeUninit};
 use gfx_hal::{
     format::Format,
     pso::{
-        AttributeDesc, DescriptorArrayIndex, DescriptorBinding, DescriptorSetLayoutBinding,
-        DescriptorType, Element, EntryPoint, GraphicsShaderSet, ShaderStageFlags, VertexBufferDesc,
+        AttributeDesc, Descriptor, DescriptorArrayIndex, DescriptorBinding,
+        DescriptorSetLayoutBinding, DescriptorType, Element, EntryPoint, GraphicsShaderSet,
+        ShaderStageFlags, VertexBufferDesc,
     },
-    Device,
+    Device, IndexType as HALIndexType,
 };
 
 use crate::gfx_back::Backend;
 use crate::util::TakeExt;
-use crate::{BufferPool, Descriptors, HALData, Mesh};
+use crate::{BufferPool, DescriptorPool, HALData, Mesh};
 
 pub struct Shader<
     'a,
     Vertex: VertexInfo<Vertex>,
-    Uniforms: Uniform,
-    Index,
+    Uniforms: UniformInfo,
+    Index: IndexType,
     Constants: PushConstantInfo,
 > {
     pub(crate) data: &'a HALData,
@@ -35,29 +36,51 @@ pub struct Shader<
     constants_phantom: PhantomData<Constants>,
 }
 
+pub trait IndexType {
+    const HAL: HALIndexType;
+}
+
+impl IndexType for u16 {
+    const HAL: HALIndexType = HALIndexType::U16;
+}
+
+impl IndexType for u32 {
+    const HAL: HALIndexType = HALIndexType::U32;
+}
+
 pub trait VertexInfo<T> {
     const ATTRIBUTES: &'static [Format];
     const STRIDE: u32 = std::mem::size_of::<T>() as u32;
 }
 
-pub trait Uniform {
-    const UNIFORMS: &'static [UniformInfo];
+pub trait UniformInfo {
+    const UNIFORMS: &'static [UniformInfoData];
 }
 
-pub struct UniformInfo {
+pub struct UniformInfoData {
     pub stage: ShaderStageFlags,
     pub uniform_type: DescriptorType,
     pub count: DescriptorArrayIndex,
     pub mutable: bool,
 }
 
-pub trait PushConstantInfo: Sized {
+pub trait PushConstantInfo {
     const STAGES: &'static [ShaderStageFlags];
-    const SIZE: u32 = std::mem::size_of::<Self>() as u32;
+    const SIZE: u32;
 }
 
-impl<'a, Vertex: VertexInfo<Vertex>, Uniforms: Uniform, Index, Constants: PushConstantInfo>
-    Shader<'a, Vertex, Uniforms, Index, Constants>
+impl PushConstantInfo for () {
+    const STAGES: &'static [ShaderStageFlags] = &[];
+    const SIZE: u32 = 0;
+}
+
+impl<
+        'a,
+        Vertex: VertexInfo<Vertex>,
+        Uniforms: UniformInfo,
+        Index: IndexType,
+        Constants: PushConstantInfo,
+    > Shader<'a, Vertex, Uniforms, Index, Constants>
 {
     pub(crate) fn create<'b>(
         data: &'a HALData,
@@ -89,18 +112,20 @@ impl<'a, Vertex: VertexInfo<Vertex>, Uniforms: Uniform, Index, Constants: PushCo
                 })
                 .collect::<Vec<DescriptorSetLayoutBinding>>();
 
+            let pc_layout = if Constants::SIZE == 0 {
+                vec![]
+            } else {
+                vec![(push_constant_stages, 0..Constants::SIZE)]
+            };
+
             let desc_layout = device
                 .create_descriptor_set_layout(&layout_bindings, &[])
                 .unwrap();
             let pipe_layout = device
-                .create_pipeline_layout(
-                    once(&desc_layout),
-                    once((push_constant_stages, 0..Constants::SIZE)),
-                )
+                .create_pipeline_layout(once(&desc_layout), pc_layout)
                 .unwrap();
             (desc_layout, layout_bindings, pipe_layout)
         };
-
 
         let vertex_desc = VertexBufferDesc {
             binding: 0,
@@ -146,14 +171,14 @@ impl<'a, Vertex: VertexInfo<Vertex>, Uniforms: Uniform, Index, Constants: PushCo
         }
     }
 
-    pub fn create_mesh<F: Fn() -> Constants>(
+    pub fn create_mesh<'b>(
         &'a self,
         pool: &'a BufferPool,
         vertices: Vec<Vertex>,
         indices: Vec<Index>,
-        push_constant_fn: F,
-    ) -> Mesh<'a, Vertex, Uniforms, Index, Constants, F> {
-        Mesh::create(self, pool, vertices, indices, push_constant_fn)
+        descriptors: &'b [Vec<Descriptor<Backend>>],
+    ) -> Mesh<'a, Vertex, Uniforms, Index, Constants> {
+        Mesh::create(self, pool, vertices, indices, descriptors)
     }
 
     pub(crate) fn layout_bindings(&self) -> &[DescriptorSetLayoutBinding] {
@@ -180,8 +205,8 @@ impl<'a, Vertex: VertexInfo<Vertex>, Uniforms: Uniform, Index, Constants: PushCo
     pub fn create_descriptors(
         &'a self,
         pool_count: usize,
-    ) -> Descriptors<'a, Vertex, Uniforms, Index, Constants> {
-        Descriptors::create(self, pool_count)
+    ) -> DescriptorPool<'a, Vertex, Uniforms, Index, Constants> {
+        DescriptorPool::create(self, pool_count)
     }
 
     pub(crate) fn make_set<'b>(&'a self) -> GraphicsShaderSet<'b, Backend>
@@ -210,8 +235,13 @@ impl<'a, Vertex: VertexInfo<Vertex>, Uniforms: Uniform, Index, Constants: PushCo
     }
 }
 
-impl<'a, Vertex: VertexInfo<Vertex>, Uniforms: Uniform, Index, Constants: PushConstantInfo> Drop
-    for Shader<'a, Vertex, Uniforms, Index, Constants>
+impl<
+        'a,
+        Vertex: VertexInfo<Vertex>,
+        Uniforms: UniformInfo,
+        Index: IndexType,
+        Constants: PushConstantInfo,
+    > Drop for Shader<'a, Vertex, Uniforms, Index, Constants>
 {
     fn drop(&mut self) {
         let device = &self.data.device;

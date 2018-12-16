@@ -11,7 +11,7 @@ use gfx_hal::{
 use crate::gfx_back::Backend;
 use crate::util::TakeExt;
 use crate::{
-    shader::{Shader, Uniform, PushConstantInfo, VertexInfo},
+    shader::{IndexType, PushConstantInfo, Shader, UniformInfo, VertexInfo},
     RenderPass,
 };
 
@@ -21,7 +21,12 @@ pub struct Pipeline<'a> {
 }
 
 impl<'a> Pipeline<'a> {
-    pub(crate) fn create<Vertex: VertexInfo<Vertex>, Uniforms: Uniform, Index, Constants: PushConstantInfo>(
+    pub(crate) fn create<
+        Vertex: VertexInfo<Vertex>,
+        Uniforms: UniformInfo,
+        Index: IndexType,
+        Constants: PushConstantInfo,
+    >(
         pass: &'a RenderPass<'a>,
         shader: &'a Shader<'a, Vertex, Uniforms, Index, Constants>,
     ) -> Pipeline<'a> {

@@ -4,7 +4,8 @@ use gfx_hal::{
     format::{Aspects, ChannelType, Format},
     image::{Extent, Kind},
     window::Extent2D,
-    AcquireError, Backbuffer, Device, FrameSync, PresentMode, Surface, Swapchain as HALSwapchain, SwapchainConfig,
+    AcquireError, Backbuffer, Device, FrameSync, PresentMode, Surface, Swapchain as HALSwapchain,
+    SwapchainConfig,
 };
 //#[cfg(not(feature = "gl"))]
 use gfx_hal::image::ViewKind;
@@ -14,7 +15,7 @@ use crate::ImageView;
 use crate::gfx_back::Backend;
 use crate::util::TakeExt;
 use crate::{
-    texture::{Texture, MipMaps, TextureInfo},
+    texture::{MipMaps, Texture, TextureInfo},
     BufferPool, HALData, RenderPass, Semaphore,
 };
 
@@ -69,7 +70,14 @@ impl<'a> Swapchain<'a> {
             Backbuffer::Images(ref i) => i
                 .iter()
                 .map(|i| {
-                    ImageView::create(data, i, surface_color_format, ViewKind::D2, Aspects::COLOR, 1)
+                    ImageView::create(
+                        data,
+                        i,
+                        surface_color_format,
+                        ViewKind::D2,
+                        Aspects::COLOR,
+                        1,
+                    )
                 })
                 .collect::<Vec<_>>(),
             _ => panic!("Non-opengl backend gave framebuffers!"),

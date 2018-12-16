@@ -1,4 +1,4 @@
-use std::{iter::once, mem::MaybeUninit};
+use std::{iter::once, mem::MaybeUninit, ops::Range};
 
 use gfx_hal::{
     self,
@@ -15,6 +15,7 @@ use gfx_hal::{
     queue::Graphics,
     Device,
 };
+
 use gfx_memory::{Block, MemoryAllocator, SmartAllocator, Type};
 
 use crate::gfx_back::Backend;
@@ -109,8 +110,7 @@ impl<'a> Texture<'a> {
                             cmd_buf,
                             &image,
                             0,
-                            Layout::Undefined,
-                            Layout::DepthStencilAttachmentOptimal,
+                            Layout::Undefined..Layout::DepthStencilAttachmentOptimal,
                         );
                     });
             },
@@ -140,21 +140,19 @@ impl<'a> Texture<'a> {
                                 cmd_buf,
                                 &image,
                                 level,
-                                Layout::Undefined,
-                                Layout::TransferDstOptimal,
+                                Layout::Undefined..Layout::TransferDstOptimal,
                             );
                             cmd_buf.copy_buffer_to_image(
                                 &staged.buffer,
                                 &image,
                                 Layout::TransferDstOptimal,
-                                vec![copy],
+                                once(copy),
                             );
                             Self::transition_image_layout(
                                 cmd_buf,
                                 &image,
                                 level,
-                                Layout::TransferDstOptimal,
-                                Layout::ShaderReadOnlyOptimal,
+                                Layout::TransferDstOptimal..Layout::ShaderReadOnlyOptimal,
                             );
                         }
                     });
@@ -227,18 +225,19 @@ impl<'a> Texture<'a> {
                     (extent.width, extent.height)
                 };
                 let levels = info.mipmaps.levels(info);
-                println!("Mipmap levels: {}", levels);
                 for i in 1..levels {
                     let level = i - 1;
+                    let range = SubresourceRange {
+                        aspects: Aspects::COLOR,
+                        levels: level..(level + 1),
+                        layers: 0..1,
+                    };
                     let init_barrier = Barrier::Image {
                         states: (Access::TRANSFER_WRITE, Layout::TransferDstOptimal)
                             ..(Access::TRANSFER_READ, Layout::TransferSrcOptimal),
                         target: image,
-                        range: SubresourceRange {
-                            aspects: Aspects::COLOR,
-                            levels: level..(level + 1),
-                            layers: 0..1,
-                        },
+                        families: None,
+                        range: range.clone(),
                     };
                     buffer.pipeline_barrier(
                         PipelineStage::TRANSFER..PipelineStage::TRANSFER,
@@ -279,11 +278,8 @@ impl<'a> Texture<'a> {
                         states: (Access::TRANSFER_READ, Layout::TransferSrcOptimal)
                             ..(Access::SHADER_READ, Layout::ShaderReadOnlyOptimal),
                         target: image,
-                        range: SubresourceRange {
-                            aspects: Aspects::COLOR,
-                            levels: level..(level + 1),
-                            layers: 0..1,
-                        },
+                        families: None,
+                        range: range.clone(),
                     };
                     buffer.pipeline_barrier(
                         PipelineStage::TRANSFER..PipelineStage::FRAGMENT_SHADER,
@@ -301,6 +297,7 @@ impl<'a> Texture<'a> {
                     states: (Access::TRANSFER_READ, Layout::TransferSrcOptimal)
                         ..(Access::SHADER_READ, Layout::ShaderReadOnlyOptimal),
                     target: image,
+                    families: None,
                     range: SubresourceRange {
                         aspects: Aspects::COLOR,
                         levels: levels - 1..levels,
@@ -319,40 +316,40 @@ impl<'a> Texture<'a> {
         cmd_buf: &mut gfx_hal::command::CommandBuffer<Backend, Graphics>,
         image: &<Backend as gfx_hal::Backend>::Image,
         levels: u8,
-        old: Layout,
-        new: Layout,
+        layout: Range<Layout>,
     ) {
-        let (aspects, src_access, src_stage, dst_access, dst_stage) =
-            if old == Layout::Undefined && new == Layout::TransferDstOptimal {
+        let (aspects, access, stage) =
+            if layout.start == Layout::Undefined && layout.end == Layout::TransferDstOptimal {
                 (
                     Aspects::COLOR,
-                    Access::empty(),
-                    PipelineStage::TOP_OF_PIPE,
-                    Access::TRANSFER_WRITE,
-                    PipelineStage::TRANSFER,
+                    Access::empty()..Access::TRANSFER_WRITE,
+                    PipelineStage::TOP_OF_PIPE..PipelineStage::TRANSFER,
                 )
-            } else if old == Layout::TransferDstOptimal && new == Layout::ShaderReadOnlyOptimal {
+            } else if layout.start == Layout::TransferDstOptimal
+                && layout.end == Layout::ShaderReadOnlyOptimal
+            {
                 (
                     Aspects::COLOR,
-                    Access::TRANSFER_WRITE,
-                    PipelineStage::TRANSFER,
-                    Access::SHADER_READ,
-                    PipelineStage::FRAGMENT_SHADER,
+                    Access::TRANSFER_WRITE..Access::SHADER_READ,
+                    PipelineStage::TRANSFER..PipelineStage::FRAGMENT_SHADER,
                 )
-            } else if old == Layout::Undefined && new == Layout::DepthStencilAttachmentOptimal {
+            } else if layout.start == Layout::Undefined
+                && layout.end == Layout::DepthStencilAttachmentOptimal
+            {
                 (
                     Aspects::DEPTH | Aspects::STENCIL,
-                    Access::empty(),
-                    PipelineStage::TOP_OF_PIPE,
-                    Access::DEPTH_STENCIL_ATTACHMENT_READ | Access::DEPTH_STENCIL_ATTACHMENT_WRITE,
-                    PipelineStage::EARLY_FRAGMENT_TESTS,
+                    Access::empty()
+                        ..(Access::DEPTH_STENCIL_ATTACHMENT_READ
+                            | Access::DEPTH_STENCIL_ATTACHMENT_WRITE),
+                    PipelineStage::TOP_OF_PIPE..PipelineStage::EARLY_FRAGMENT_TESTS,
                 )
             } else {
                 panic!("Unsupported layout change");
             };
         let mem_barrier = Barrier::Image {
-            states: (src_access, old)..(dst_access, new),
+            states: (access.start, layout.start)..(access.end, layout.end),
             target: image,
+            families: None,
             range: SubresourceRange {
                 aspects: aspects,
                 levels: levels..levels + 1,
@@ -360,11 +357,7 @@ impl<'a> Texture<'a> {
             },
         };
 
-        cmd_buf.pipeline_barrier(
-            src_stage..dst_stage,
-            Dependencies::empty(),
-            vec![&mem_barrier],
-        );
+        cmd_buf.pipeline_barrier(stage, Dependencies::empty(), once(&mem_barrier));
     }
 
     pub(crate) fn image(&self) -> &<Backend as gfx_hal::Backend>::Image {

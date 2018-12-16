@@ -10,7 +10,7 @@ use gfx_hal::{
 #[cfg(not(feature = "gl"))]
 use crate::gfx_back;
 use crate::gfx_back::Backend;
-use crate::{*, shader::*};
+use crate::{shader::*, *};
 
 pub struct HALData {
     pub(crate) device: <Backend as gfx_hal::Backend>::Device,
@@ -65,7 +65,13 @@ impl<'a> HALData {
         }
     }
 
-    pub fn create_shader<'b, Vertex: VertexInfo<Vertex>, Uniforms: Uniform, Index, Constants: PushConstantInfo>(
+    pub fn create_shader<
+        'b,
+        Vertex: VertexInfo<Vertex>,
+        Uniforms: UniformInfo,
+        Index: IndexType,
+        Constants: PushConstantInfo,
+    >(
         &'a self,
         vert: &'b [u8],
         frag: &'b [u8],
@@ -116,9 +122,7 @@ impl<'a> HALData {
     ) -> Result<(), ()> {
         let queue = &mut self.queue_group.borrow_mut().queues[0];
         let swap = unsafe { swap.swapchain.get_ref() }.borrow();
-        let present_sems = present_sems
-            .iter()
-            .map(|s| s.semaphore());
+        let present_sems = present_sems.iter().map(|s| s.semaphore());
         swap.present(queue, frame_idx, present_sems)
     }
 

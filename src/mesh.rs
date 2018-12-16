@@ -1,27 +1,27 @@
-use crate::{
-    shader::{PushConstantInfo, Shader, Uniform, VertexInfo},
-    Buffer, BufferPool,
-};
 use std::{
     iter::once,
     mem::{align_of, size_of},
     slice,
 };
 
-use crate::gfx_back::Backend;
 use gfx_hal::{
     buffer::{IndexBufferView, Usage},
     command::{Primary, RenderPassInlineEncoder},
-    IndexType,
+    pso::Descriptor,
+};
+
+use crate::gfx_back::Backend;
+use crate::{
+    shader::{IndexType, PushConstantInfo, Shader, UniformInfo, VertexInfo},
+    Buffer, BufferPool, DescriptorPool,
 };
 
 pub struct Mesh<
     'a,
     Vertex: VertexInfo<Vertex>,
-    Uniforms: Uniform,
-    Index,
+    Uniforms: UniformInfo,
+    Index: IndexType,
     Constants: PushConstantInfo,
-    F: Fn() -> Constants,
 > {
     shader: &'a Shader<'a, Vertex, Uniforms, Index, Constants>,
     vert_offset: u64,
@@ -29,25 +29,24 @@ pub struct Mesh<
     index_offset: u64,
     indices: Vec<Index>,
     buffer: Buffer<'a>,
-    push_constant_fn: F,
+    descriptor_pool: DescriptorPool<'a, Vertex, Uniforms, Index, Constants>,
 }
 
 impl<
         'a,
         Vertex: VertexInfo<Vertex>,
-        Uniforms: Uniform,
-        Index,
+        Uniforms: UniformInfo,
+        Index: IndexType,
         Constants: PushConstantInfo,
-        F: Fn() -> Constants,
-    > Mesh<'a, Vertex, Uniforms, Index, Constants, F>
+    > Mesh<'a, Vertex, Uniforms, Index, Constants>
 {
     pub(crate) fn create(
         shader: &'a Shader<'a, Vertex, Uniforms, Index, Constants>,
         pool: &'a BufferPool,
         vertices: Vec<Vertex>,
         indices: Vec<Index>,
-        push_constant_fn: F,
-    ) -> Mesh<'a, Vertex, Uniforms, Index, Constants, F> {
+        descriptors: &[Vec<Descriptor<Backend>>],
+    ) -> Mesh<'a, Vertex, Uniforms, Index, Constants> {
         let (vert_offset, index_offset) = {
             let vert_offset = 0;
             let mut index_offset = size_of::<Vertex>() * vertices.len();
@@ -56,9 +55,14 @@ impl<
             (vert_offset as u64, index_offset as u64)
         };
         let size = index_offset + ((size_of::<Index>() * indices.len()) as u64);
-        let buffer = pool.create_buffer(size, Usage::VERTEX | Usage::INDEX, true);
+        let mut buffer = pool.create_buffer(size, Usage::VERTEX | Usage::INDEX, true);
         buffer.upload(&vertices, vert_offset);
         buffer.upload(&indices, index_offset);
+        let descriptor_pool = shader.create_descriptors(descriptors.len());
+        descriptors
+            .iter()
+            .enumerate()
+            .for_each(|(idx, desc)| descriptor_pool.write(idx, desc));
         Mesh {
             shader,
             vert_offset,
@@ -66,20 +70,30 @@ impl<
             index_offset,
             indices,
             buffer,
-            push_constant_fn,
+            descriptor_pool,
         }
     }
 
-    pub fn draw(&self, encoder: &mut RenderPassInlineEncoder<Backend, Primary>) {
+    pub fn draw(
+        &self,
+        encoder: &mut RenderPassInlineEncoder<Backend, Primary>,
+        descriptor_idx: usize,
+        push_constants: Constants,
+    ) {
         encoder.bind_vertex_buffers(0, once((self.buffer.buffer(), self.vert_offset)));
         encoder.bind_index_buffer(IndexBufferView {
             buffer: self.buffer.buffer(),
             offset: self.index_offset,
-            index_type: IndexType::U16,
+            index_type: Index::HAL,
         });
-        {
-            let pc = (self.push_constant_fn)();
-            let pc_ptr = &pc as *const Constants as *const u32;
+        encoder.bind_graphics_descriptor_sets(
+            self.shader.pipe_layout(),
+            0,
+            once(self.descriptor_pool.descriptor_set(descriptor_idx)),
+            &[],
+        );
+        if Constants::SIZE != 0 {
+            let pc_ptr = &push_constants as *const Constants as *const u32;
             let slice =
                 unsafe { slice::from_raw_parts(pc_ptr, size_of::<Constants>() / size_of::<u32>()) };
             encoder.push_graphics_constants(

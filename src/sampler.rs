@@ -1,35 +1,35 @@
-use std::mem::MaybeUninit;
-use crate::{HALData};
 use crate::gfx_back::Backend;
 use crate::util::TakeExt;
+use crate::HALData;
+use std::mem::MaybeUninit;
 
-use gfx_hal::{Device, image::SamplerInfo};
+use gfx_hal::{image::SamplerInfo, Device};
 
 pub struct Sampler<'a> {
-	data: &'a HALData,
-	pub(crate) sampler: MaybeUninit<<Backend as gfx_hal::Backend>::Sampler>,
+    data: &'a HALData,
+    pub(crate) sampler: MaybeUninit<<Backend as gfx_hal::Backend>::Sampler>,
 }
 
 impl<'a> Sampler<'a> {
-	pub(crate) fn create(data: &'a HALData, sampler_info: SamplerInfo) -> Sampler {
-		println!("Creating Sampler");
-		let device = &data.device;
-		let sampler = device.create_sampler(sampler_info).unwrap();
-		Sampler {
-			data,
-			sampler: MaybeUninit::new(sampler)
-		}
-	}
+    pub(crate) fn create(data: &'a HALData, sampler_info: SamplerInfo) -> Sampler {
+        println!("Creating Sampler");
+        let device = &data.device;
+        let sampler = device.create_sampler(sampler_info).unwrap();
+        Sampler {
+            data,
+            sampler: MaybeUninit::new(sampler),
+        }
+    }
 
-	pub fn sampler(&self) -> &<Backend as gfx_hal::Backend>::Sampler {
-		unsafe { self.sampler.get_ref() }
-	}
+    pub fn sampler(&self) -> &<Backend as gfx_hal::Backend>::Sampler {
+        unsafe { self.sampler.get_ref() }
+    }
 }
 
 impl<'a> Drop for Sampler<'a> {
-	fn drop(&mut self) {
-		let device = &self.data.device;
-		device.destroy_sampler(MaybeUninit::take(&mut self.sampler));
-		println!("Dropped Sampler");
-	}
+    fn drop(&mut self) {
+        let device = &self.data.device;
+        device.destroy_sampler(MaybeUninit::take(&mut self.sampler));
+        println!("Dropped Sampler");
+    }
 }

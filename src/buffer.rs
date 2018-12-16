@@ -6,6 +6,7 @@ use gfx_hal::{
     memory::Properties,
     Device,
 };
+
 use gfx_memory::{Block, MemoryAllocator, SmartAllocator, Type};
 
 use crate::gfx_back::Backend;
@@ -19,11 +20,6 @@ pub struct Buffer<'a> {
     usage: Usage,
     props: Properties,
 }
-
-//pub struct BufferView<'a> {
-//    data: &'a HALData,
-//    view: MaybeUninit<<Backend as gfx_hal::Backend>::BufferView>,
-//}
 
 impl<'a> Buffer<'a> {
     pub fn create(pool: &'a BufferPool, size: u64, usage: Usage, uses_staging: bool) -> Buffer<'a> {
@@ -52,7 +48,7 @@ impl<'a> Buffer<'a> {
         }
     }
 
-    pub fn upload<T>(&self, data: &[T], offset: u64) {
+    pub fn upload<T>(&mut self, data: &[T], offset: u64) {
         let device = &self.parent.data.device;
         if self.props.contains(Properties::CPU_VISIBLE) {
             let block = unsafe { self.block.get_ref() };
@@ -85,7 +81,7 @@ impl<'a> Buffer<'a> {
         device.unmap_memory(memory);
     }
 
-    fn staged_upload<T>(&self, data: &[T], offset: u64) {
+    fn staged_upload<T>(&mut self, data: &[T], offset: u64) {
         let device = &self.parent.data.device;
         let pool = &self.parent.command_pool;
         let staged = unsafe { self.parent.staging_buf.get_ref() };

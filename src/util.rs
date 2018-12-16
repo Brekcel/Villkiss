@@ -10,8 +10,8 @@ impl<T> TakeExt<T> for std::mem::MaybeUninit<T> {
 }
 
 pub(crate) trait GFXRes: Drop {
-//    fn data(&self) -> &HALData;
-//	fn device(&self) -> &<Backend as gfx_hal::Backend>::Device {
-//		&self.data().device
-//	}
+    //    fn data(&self) -> &HALData;
+    //	fn device(&self) -> &<Backend as gfx_hal::Backend>::Device {
+    //		&self.data().device
+    //	}
 }

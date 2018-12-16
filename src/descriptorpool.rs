@@ -1,19 +1,21 @@
 use std::{iter::once, mem::MaybeUninit};
 
 use gfx_hal::{
-    pso::{Descriptor, DescriptorPool, DescriptorRangeDesc, DescriptorSetWrite},
+    pso::{
+        Descriptor, DescriptorPool as HALDescriptorPool, DescriptorRangeDesc, DescriptorSetWrite,
+    },
     Device,
 };
 
 use crate::gfx_back::Backend;
-use crate::shader::{PushConstantInfo, Shader, Uniform, VertexInfo};
+use crate::shader::{IndexType, PushConstantInfo, Shader, UniformInfo, VertexInfo};
 use crate::util::TakeExt;
 
-pub struct Descriptors<
+pub struct DescriptorPool<
     'a,
     Vertex: VertexInfo<Vertex>,
-    Uniforms: Uniform,
-    Index,
+    Uniforms: UniformInfo,
+    Index: IndexType,
     Constants: PushConstantInfo,
 > {
     shader: &'a Shader<'a, Vertex, Uniforms, Index, Constants>,
@@ -21,13 +23,18 @@ pub struct Descriptors<
     descriptor_sets: Vec<<Backend as gfx_hal::Backend>::DescriptorSet>,
 }
 
-impl<'a, Vertex: VertexInfo<Vertex>, Uniforms: Uniform, Index, Constants: PushConstantInfo>
-    Descriptors<'a, Vertex, Uniforms, Index, Constants>
+impl<
+        'a,
+        Vertex: VertexInfo<Vertex>,
+        Uniforms: UniformInfo,
+        Index: IndexType,
+        Constants: PushConstantInfo,
+    > DescriptorPool<'a, Vertex, Uniforms, Index, Constants>
 {
     pub(crate) fn create(
         shader: &'a Shader<'a, Vertex, Uniforms, Index, Constants>,
         pool_count: usize,
-    ) -> Descriptors<'a, Vertex, Uniforms, Index, Constants> {
+    ) -> DescriptorPool<'a, Vertex, Uniforms, Index, Constants> {
         println!("Creating Descriptors");
         let device = &shader.data.device;
         let desc_layout = shader.desc_layout();
@@ -52,7 +59,7 @@ impl<'a, Vertex: VertexInfo<Vertex>, Uniforms: Uniform, Index, Constants: PushCo
             buf
         };
 
-        Descriptors {
+        DescriptorPool {
             shader,
             descriptor_pool: MaybeUninit::new(descriptor_pool),
             descriptor_sets,
@@ -78,13 +85,18 @@ impl<'a, Vertex: VertexInfo<Vertex>, Uniforms: Uniform, Index, Constants: PushCo
     }
 }
 
-impl<'a, Vertex: VertexInfo<Vertex>, Uniforms: Uniform, Index, Constants: PushConstantInfo> Drop
-    for Descriptors<'a, Vertex, Uniforms, Index, Constants>
+impl<
+        'a,
+        Vertex: VertexInfo<Vertex>,
+        Uniforms: UniformInfo,
+        Index: IndexType,
+        Constants: PushConstantInfo,
+    > Drop for DescriptorPool<'a, Vertex, Uniforms, Index, Constants>
 {
     fn drop(&mut self) {
         let device = &self.shader.data.device;
         let pool = MaybeUninit::take(&mut self.descriptor_pool);
-//        pool.free_sets(self.descriptor_sets.drain(..));
+        //        pool.free_sets(self.descriptor_sets.drain(..));
         device.destroy_descriptor_pool(pool);
         println!("Dropped Descriptors");
     }
