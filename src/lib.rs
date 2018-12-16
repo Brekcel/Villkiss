@@ -19,23 +19,25 @@ pub use cgmath;
 pub use gfx_hal;
 pub use winit;
 
-pub use crate::buffer::Buffer;
-pub use crate::bufferpool::BufferPool;
-pub use crate::commandpool::CommandPool;
-pub use crate::descriptorpool::DescriptorPool;
-pub use crate::fence::Fence;
-pub use crate::framebuffer::FrameBuffer;
-pub use crate::hal::HALData;
-pub use crate::imageview::ImageView;
-pub use crate::mesh::Mesh;
-pub use crate::pipeline::Pipeline;
-pub use crate::renderpass::RenderPass;
-pub use crate::sampler::Sampler;
-pub use crate::semaphore::Semaphore;
-pub use crate::shader::Shader;
-pub use crate::swapchain::Swapchain;
-pub use crate::texture::Texture;
-pub use crate::window::Window;
+pub use crate::{
+	buffer::Buffer,
+	bufferpool::BufferPool,
+	commandpool::CommandPool,
+	descriptorpool::DescriptorPool,
+	fence::Fence,
+	framebuffer::FrameBuffer,
+	hal::HALData,
+	imageview::ImageView,
+	mesh::Mesh,
+	pipeline::Pipeline,
+	renderpass::RenderPass,
+	sampler::Sampler,
+	semaphore::Semaphore,
+	shader::Shader,
+	swapchain::Swapchain,
+	texture::Texture,
+	window::Window,
+};
 
 pub mod buffer;
 pub mod bufferpool;

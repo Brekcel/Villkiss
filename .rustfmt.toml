@@ -1,0 +1,15 @@
+unstable_features = true
+edition = "2018"
+binop_separator = "Back"
+fn_single_line = true
+hard_tabs = true
+imports_layout = "Vertical"
+merge_imports = true
+match_block_trailing_comma = true
+newline_style = "Unix"
+reorder_impl_items = true
+trailing_semicolon = true
+use_field_init_shorthand = true
+use_try_shorthand = true
+wrap_comments = true
+match_arm_blocks = false
