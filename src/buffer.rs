@@ -1,8 +1,3 @@
-use std::mem::{
-	size_of,
-	MaybeUninit,
-};
-
 use gfx_hal::{
 	buffer::{
 		self,
@@ -10,7 +5,15 @@ use gfx_hal::{
 	},
 	command::BufferCopy,
 	memory::Properties,
+	pso::Descriptor,
 	Device,
+};
+use std::{
+	mem::{
+		size_of,
+		MaybeUninit,
+	},
+	ops::Range,
 };
 
 use gfx_memory::{
@@ -109,22 +112,24 @@ impl<'a> Buffer<'a> {
 		});
 	}
 
-	pub fn buffer(&self) -> &<Backend as gfx_hal::Backend>::Buffer {
+	pub(crate) fn buffer(&self) -> &<Backend as gfx_hal::Backend>::Buffer {
 		unsafe { self.buffer.get_ref() }
 	}
 
-	//    pub fn buffer_view(&self, format: Option<Format>, range: Range<usize>) ->
-	// BufferView {        let data = &self.parent.data;
-	//        let device = &data.device;
-	//        let range = range.start as u64..range.end as u64;
-	//        let view = device
-	//            .create_buffer_view(self.buffer(), format, range)
-	//            .unwrap();
-	//        BufferView {
-	//            data,
-	//            view: MaybeUninit::new(view),
-	//        }
-	//    }
+	pub fn descriptor(&self) -> Descriptor<Backend> {
+		Descriptor::Buffer(self.buffer(), None..None)
+	}
+
+	pub fn descriptor_to_end(&self, start: usize) -> Descriptor<Backend> {
+		Descriptor::Buffer(self.buffer(), Some(start as u64)..None)
+	}
+
+	pub fn descriptor_range(&self, range: Range<usize>) -> Descriptor<Backend> {
+		Descriptor::Buffer(
+			self.buffer(),
+			Some(range.start as u64)..Some(range.end as u64),
+		)
+	}
 }
 
 impl<'a> Drop for Buffer<'a> {
