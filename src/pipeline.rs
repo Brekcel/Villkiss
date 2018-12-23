@@ -1,6 +1,10 @@
-use std::mem::MaybeUninit;
+use std::{
+	marker::PhantomData,
+	mem::MaybeUninit,
+};
 
 use gfx_hal::{
+	command::RenderSubpassCommon,
 	pso::{
 		BlendState,
 		ColorBlendDesc,
@@ -29,24 +33,52 @@ use crate::{
 		VertexInfo,
 	},
 	util::TakeExt,
+	Mesh,
 	RenderPass,
 };
 
-pub struct Pipeline<'a> {
+pub struct Pipeline<
+	'a,
+	Vertex: VertexInfo<Vertex>,
+	Uniforms: UniformInfo,
+	Index: IndexType,
+	Constants: PushConstantInfo,
+> {
 	pass: &'a RenderPass<'a>,
 	pipe: MaybeUninit<<Backend as gfx_hal::Backend>::GraphicsPipeline>,
+	vert_phantom: PhantomData<Vertex>,
+	uniforms_phantom: PhantomData<Uniforms>,
+	index_phantom: PhantomData<Index>,
+	constants_phantom: PhantomData<Constants>,
 }
 
-impl<'a> Pipeline<'a> {
-	pub(crate) fn create<
+pub struct BoundPipe<
+	'a,
+	'b: 'a,
+	Vertex: VertexInfo<Vertex>,
+	Uniforms: UniformInfo,
+	Index: IndexType,
+	Constants: PushConstantInfo,
+> {
+	encoder: &'a mut RenderSubpassCommon<'b, Backend>,
+	vert_phantom: PhantomData<Vertex>,
+	uniforms_phantom: PhantomData<Uniforms>,
+	index_phantom: PhantomData<Index>,
+	constants_phantom: PhantomData<Constants>,
+}
+
+impl<
+		'a,
 		Vertex: VertexInfo<Vertex>,
 		Uniforms: UniformInfo,
 		Index: IndexType,
 		Constants: PushConstantInfo,
-	>(
+	> Pipeline<'a, Vertex, Uniforms, Index, Constants>
+{
+	pub(crate) fn create(
 		pass: &'a RenderPass<'a>,
 		shader: &'a Shader<'a, Vertex, Uniforms, Index, Constants>,
-	) -> Pipeline<'a> {
+	) -> Pipeline<'a, Vertex, Uniforms, Index, Constants> {
 		pub const RASTERIZER: Rasterizer = Rasterizer {
 			polygon_mode: PolygonMode::Fill,
 			cull_face: Face::BACK,
@@ -95,15 +127,57 @@ impl<'a> Pipeline<'a> {
 		Pipeline {
 			pass,
 			pipe: MaybeUninit::new(pipe),
+			vert_phantom: PhantomData,
+			uniforms_phantom: PhantomData,
+			index_phantom: PhantomData,
+			constants_phantom: PhantomData,
 		}
 	}
 
-	pub fn pipe(&self) -> &<Backend as gfx_hal::Backend>::GraphicsPipeline {
-		unsafe { self.pipe.get_ref() }
+	pub fn bind_pipe<F: FnOnce(&mut BoundPipe<Vertex, Uniforms, Index, Constants>)>(
+		&self,
+		encoder: &mut RenderSubpassCommon<Backend>,
+		draws: F,
+	) {
+		encoder.bind_graphics_pipeline(unsafe { self.pipe.get_ref() });
+		let mut bp = BoundPipe {
+			encoder,
+			vert_phantom: PhantomData,
+			uniforms_phantom: PhantomData,
+			index_phantom: PhantomData,
+			constants_phantom: PhantomData,
+		};
+		draws(&mut bp);
 	}
 }
 
-impl<'a> Drop for Pipeline<'a> {
+impl<
+		'a,
+		'b: 'a,
+		Vertex: VertexInfo<Vertex>,
+		Uniforms: UniformInfo,
+		Index: IndexType,
+		Constants: PushConstantInfo,
+	> BoundPipe<'a, 'b, Vertex, Uniforms, Index, Constants>
+{
+	pub fn draw_mesh(
+		&mut self,
+		mesh: &Mesh<Vertex, Uniforms, Index, Constants>,
+		descriptor_idx: usize,
+		constants: Constants,
+	) {
+		mesh.draw(self.encoder, descriptor_idx, constants);
+	}
+}
+
+impl<
+		'a,
+		Vertex: VertexInfo<Vertex>,
+		Uniforms: UniformInfo,
+		Index: IndexType,
+		Constants: PushConstantInfo,
+	> Drop for Pipeline<'a, Vertex, Uniforms, Index, Constants>
+{
 	fn drop(&mut self) {
 		let device = &self.pass.swapchain.data.device;
 		device.destroy_graphics_pipeline(MaybeUninit::take(&mut self.pipe));

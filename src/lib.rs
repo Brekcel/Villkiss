@@ -29,7 +29,7 @@ pub use crate::{
 	hal::HALData,
 	imageview::ImageView,
 	mesh::Mesh,
-	pipeline::Pipeline,
+	pipeline::{BoundPipe, Pipeline},
 	renderpass::RenderPass,
 	sampler::Sampler,
 	semaphore::Semaphore,

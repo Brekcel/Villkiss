@@ -12,10 +12,7 @@ use gfx_hal::{
 		IndexBufferView,
 		Usage,
 	},
-	command::{
-		Primary,
-		RenderPassInlineEncoder,
-	},
+	command::RenderSubpassCommon,
 	pso::Descriptor,
 };
 
@@ -91,9 +88,9 @@ impl<
 		}
 	}
 
-	pub fn draw(
+	pub(crate) fn draw(
 		&self,
-		encoder: &mut RenderPassInlineEncoder<Backend, Primary>,
+		encoder: &mut RenderSubpassCommon<Backend>,
 		descriptor_idx: usize,
 		push_constants: Constants,
 	) {

@@ -91,6 +91,10 @@ impl<'a> HALData {
 
 	pub fn create_command_pool(&self) -> CommandPool { CommandPool::create(self) }
 
+	pub fn create_command_pool_max_bufs(&self, max_bufs: usize) -> CommandPool {
+		CommandPool::create_max_bufs(self, max_bufs)
+	}
+
 	pub fn create_swapchain(&'a self, pool: &'a BufferPool<'a>) -> Swapchain<'a> {
 		Swapchain::create(self, pool)
 	}

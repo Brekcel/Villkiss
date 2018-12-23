@@ -33,44 +33,44 @@ use crate::{
 	Semaphore,
 };
 
-const MAX_BUFS: usize = 16;
+const DEFAULT_MAX_BUFS: usize = 16;
 
 pub struct CommandPool<'a> {
 	pub(crate) data: &'a HALData,
 	pub(crate) pool: MaybeUninit<RefCell<HAL_CommandPool<Backend, Graphics>>>,
+	max_bufs: usize,
 	bufs_used: Cell<usize>,
 }
 
 impl<'a> CommandPool<'a> {
 	pub(crate) fn create(data: &HALData) -> CommandPool {
+		Self::create_max_bufs(data, DEFAULT_MAX_BUFS)
+	}
+
+	pub(crate) fn create_max_bufs(data: &HALData, max_bufs: usize)-> CommandPool {
 		println!("Creating Commandpool");
 		let flags: CommandPoolCreateFlags = CommandPoolCreateFlags::empty();
 		let device = &data.device;
 		let pool = device
-			.create_command_pool_typed(&data.queue_group.borrow(), flags, MAX_BUFS)
+			.create_command_pool_typed(&data.queue_group.borrow(), flags, max_bufs)
 			.unwrap();
 		CommandPool {
 			data,
 			pool: MaybeUninit::new(RefCell::new(pool)),
+			max_bufs,
 			bufs_used: Cell::new(0),
 		}
 	}
 
-	pub fn single_submit<F>(
+	pub fn single_submit(
 		&self,
 		allow_pending_resubmit: bool,
 		wait_sems: &[(&Semaphore, PipelineStage)],
 		signal_sems: &[&Semaphore],
 		fence: Option<&Fence>,
-		mut f: F,
-	) where
-		F: FnMut(&mut CommandBuffer<Backend, Graphics>),
-	{
-		self.incr_used();
-		let mut pool = unsafe { self.pool.get_ref() }.borrow_mut();
-		let mut buffer = pool.acquire_command_buffer(allow_pending_resubmit);
-		f(&mut buffer);
-		let finished = buffer.finish();
+		f: impl FnOnce(&mut CommandBuffer<Backend, Graphics>),
+	) {
+		let finished = self.submit(allow_pending_resubmit, f);
 		let wait_sems = wait_sems
 			.iter()
 			.map(|(sem, stage)| (sem.semaphore(), *stage));
@@ -82,14 +82,11 @@ impl<'a> CommandPool<'a> {
 		self.data.submit(submission, fence);
 	}
 
-	pub fn submit<F>(
+	pub fn submit(
 		&self,
 		allow_pending_resubmit: bool,
-		mut f: F,
-	) -> Submit<Backend, Graphics, OneShot, Primary>
-	where
-		F: FnMut(&mut CommandBuffer<Backend, Graphics>),
-	{
+		f: impl FnOnce(&mut CommandBuffer<Backend, Graphics>),
+	) -> Submit<Backend, Graphics, OneShot, Primary> {
 		self.incr_used();
 		let mut pool = unsafe { self.pool.get_ref() }.borrow_mut();
 		let mut buffer = pool.acquire_command_buffer(allow_pending_resubmit);
@@ -101,11 +98,11 @@ impl<'a> CommandPool<'a> {
 
 	pub fn reset(&self) {
 		self.bufs_used.set(0);
-		//        unsafe { self.pool.get_ref() }.borrow_mut().reset();
+		unsafe { self.pool.get_ref() }.borrow_mut().reset();
 	}
 
 	fn incr_used(&self) {
-		if self.bufs_used.get() == MAX_BUFS {
+		if self.bufs_used.get() == self.max_bufs {
 			self.reset();
 		}
 		self.bufs_used.update(|x| x + 1);

@@ -152,7 +152,7 @@ impl<'a> RenderPass<'a> {
 	>(
 		&'a self,
 		shader: &'a Shader<'a, Vertex, Uniforms, Index, Constants>,
-	) -> Pipeline<'a> {
+	) -> Pipeline<'a, Vertex, Uniforms, Index, Constants> {
 		Pipeline::create(self, shader)
 	}
 }
