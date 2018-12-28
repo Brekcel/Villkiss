@@ -1,9 +1,17 @@
-use std::cell::RefCell;
+use std::{
+	borrow::Borrow,
+	cell::RefCell,
+};
 
 #[cfg(not(feature = "gl"))]
 use gfx_hal::adapter::DeviceType;
 use gfx_hal::{
 	adapter::Adapter,
+	command::{
+		Primary,
+		Submittable,
+	},
+	pso::PipelineStage,
 	Device,
 	Graphics,
 	Instance,
@@ -80,7 +88,7 @@ impl<'a> HALData {
 		Vertex: VertexInfo<Vertex>,
 		Uniforms: UniformInfo,
 		Index: IndexType,
-		Constants: PushConstantInfo,
+		Constants: PushConstantInfo<Constants>,
 	>(
 		&'a self,
 		vert: &'b [u8],
@@ -91,32 +99,26 @@ impl<'a> HALData {
 
 	pub fn create_command_pool(&self) -> CommandPool { CommandPool::create(self) }
 
-	pub fn create_command_pool_max_bufs(&self, max_bufs: usize) -> CommandPool {
-		CommandPool::create_max_bufs(self, max_bufs)
-	}
-
 	pub fn create_swapchain(&'a self, pool: &'a BufferPool<'a>) -> Swapchain<'a> {
 		Swapchain::create(self, pool)
 	}
 
 	pub fn create_fence(&self) -> Fence { Fence::create(self) }
 
-	pub fn create_n_fences(&self, num: usize) -> Box<[Fence]> { Fence::create_n(self, num) }
-
 	pub fn create_semaphore(&self) -> Semaphore { Semaphore::create(self) }
 
-	pub fn create_n_semaphore(&self, num: usize) -> Box<[Semaphore]> {
-		Semaphore::create_n(self, num)
-	}
+	pub fn create_bufferpool(&self) -> BufferPool { BufferPool::create(self) }
 
-	pub fn submit(&self, sub: Submission<Backend, Graphics>, fence: Option<&Fence>) {
-		let fence = fence.map(|f| {
-			f.reset();
-			f.fence()
-		});
-		self.queue_group.borrow_mut().queues[0].submit(sub, fence);
-		if fence.is_none() {
-			self.queue_group.borrow_mut().queues[0].wait_idle().unwrap();
+	pub(crate) fn submit<'b, T, Ic, S, Iw, Is>(&self, sub: Submission<Ic, Iw, Is>, fence: &Fence)
+	where
+		T: 'b + Submittable<Backend, Graphics, Primary>,
+		Ic: IntoIterator<Item = &'b T>,
+		S: 'b + Borrow<<Backend as gfx_hal::Backend>::Semaphore>,
+		Iw: IntoIterator<Item = (&'b S, PipelineStage)>,
+		Is: IntoIterator<Item = &'b S>,
+	{
+		unsafe {
+			self.queue_group.borrow_mut().queues[0].submit(sub, Some(fence.fence()));
 		}
 	}
 
@@ -129,7 +131,7 @@ impl<'a> HALData {
 		let queue = &mut self.queue_group.borrow_mut().queues[0];
 		let swap = unsafe { swap.swapchain.get_ref() }.borrow();
 		let present_sems = present_sems.iter().map(|s| s.semaphore());
-		swap.present(queue, frame_idx, present_sems)
+		unsafe { swap.present(queue, frame_idx, present_sems) }
 	}
 
 	pub fn wait_idle(&self) { self.device.wait_idle().unwrap(); }

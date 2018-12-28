@@ -38,7 +38,12 @@ pub struct Buffer<'a> {
 }
 
 impl<'a> Buffer<'a> {
-	pub fn create(pool: &'a BufferPool, size: u64, usage: Usage, uses_staging: bool) -> Buffer<'a> {
+	pub fn create(
+		pool: &'a BufferPool<'a>,
+		size: u64,
+		usage: Usage,
+		uses_staging: bool,
+	) -> Buffer<'a> {
 		let device = &pool.data.device;
 		let size = size as buffer::Offset;
 		let (usage, props) = if uses_staging {
@@ -46,21 +51,26 @@ impl<'a> Buffer<'a> {
 		} else {
 			(usage, Properties::CPU_VISIBLE | Properties::COHERENT)
 		};
-		let unbound_buf = device.create_buffer(size, usage).unwrap();
-		let reqs = device.get_buffer_requirements(&unbound_buf);
-		let block = unsafe { pool.allocator.get_ref() }
-			.borrow_mut()
-			.alloc(device, (Type::General, props), reqs)
-			.unwrap();
-		let buffer = device
-			.bind_buffer_memory(block.memory(), block.range().start, unbound_buf)
-			.unwrap();
-		Buffer {
-			parent: pool,
-			block: MaybeUninit::new(block),
-			buffer: MaybeUninit::new(buffer),
-			usage,
-			props,
+		unsafe {
+			let mut buffer = device.create_buffer(size, usage).unwrap();
+			let reqs = device.get_buffer_requirements(&buffer);
+			let block = pool
+				.allocator
+				.get_ref()
+				.borrow_mut()
+				.alloc(device, (Type::General, props), reqs)
+				.unwrap();
+			device
+				.bind_buffer_memory(block.memory(), block.range().start, &mut buffer)
+				.unwrap();
+
+			Buffer {
+				parent: pool,
+				block: MaybeUninit::new(block),
+				buffer: MaybeUninit::new(buffer),
+				usage,
+				props,
+			}
 		}
 	}
 
@@ -88,26 +98,36 @@ impl<'a> Buffer<'a> {
 
 		let range = offset..offset + len;
 
-		let map = device.map_memory(memory, range.clone()).unwrap();
-
 		unsafe {
-			std::ptr::copy_nonoverlapping(data.as_ptr(), map as *mut T, data.len());
-		}
+			let map = device.map_memory(memory, range.clone()).unwrap();
 
-		device.unmap_memory(memory);
+			std::ptr::copy_nonoverlapping(data.as_ptr(), map as *mut T, data.len());
+
+			device.unmap_memory(memory);
+		}
 	}
 
 	fn staged_upload<T>(&mut self, data: &[T], offset: u64) {
 		let device = &self.parent.data.device;
 		let pool = &self.parent.command_pool;
 		let staged = unsafe { self.parent.staging_buf.get_ref() };
+		let fence = &staged.fence;
 		let range = BufferCopy {
 			src: 0,
 			dst: offset as buffer::Offset,
 			size: (data.len() * std::mem::size_of::<T>()) as buffer::Offset,
 		};
+		fence.wait_n_reset();
+		staged.buf_uses.update(|mut i| {
+			i += 1;
+			if i >= 16 {
+				pool.reset();
+				i = 0;
+			}
+			i
+		});
 		staged.upload(data, device);
-		pool.single_submit(true, &[], &[], None, |buffer| {
+		pool.single_submit(&[], &[], fence, |buffer| unsafe {
 			buffer.copy_buffer(&staged.buffer, self.buffer(), &[range]);
 		});
 	}
@@ -135,10 +155,14 @@ impl<'a> Buffer<'a> {
 impl<'a> Drop for Buffer<'a> {
 	fn drop(&mut self) {
 		let device = &self.parent.data.device;
-		device.destroy_buffer(MaybeUninit::take(&mut self.buffer));
-		unsafe { self.parent.allocator.get_ref() }
-			.borrow_mut()
-			.free(device, MaybeUninit::take(&mut self.block));
+		unsafe {
+			device.destroy_buffer(MaybeUninit::take(&mut self.buffer));
+			self.parent
+				.allocator
+				.get_ref()
+				.borrow_mut()
+				.free(device, MaybeUninit::take(&mut self.block));
+		}
 		println!("Dropped Buffer")
 	}
 }

@@ -30,7 +30,7 @@ pub struct DescriptorPool<
 	Vertex: VertexInfo<Vertex>,
 	Uniforms: UniformInfo,
 	Index: IndexType,
-	Constants: PushConstantInfo,
+	Constants: PushConstantInfo<Constants>,
 > {
 	shader: &'a Shader<'a, Vertex, Uniforms, Index, Constants>,
 	descriptor_pool: MaybeUninit<<Backend as gfx_hal::Backend>::DescriptorPool>,
@@ -42,7 +42,7 @@ impl<
 		Vertex: VertexInfo<Vertex>,
 		Uniforms: UniformInfo,
 		Index: IndexType,
-		Constants: PushConstantInfo,
+		Constants: PushConstantInfo<Constants>,
 	> DescriptorPool<'a, Vertex, Uniforms, Index, Constants>
 {
 	pub(crate) fn create(
@@ -60,16 +60,20 @@ impl<
 					ty: uniform.ty,
 					count: pool_count,
 				});
-			device
-				.create_descriptor_pool(pool_count, descriptors)
-				.unwrap()
+			unsafe {
+				device
+					.create_descriptor_pool(pool_count, descriptors)
+					.unwrap()
+			}
 		};
 
 		let descriptor_sets = {
 			let mut buf = Vec::with_capacity(pool_count);
-			descriptor_pool
-				.allocate_sets(vec![desc_layout; pool_count], &mut buf)
-				.unwrap();
+			unsafe {
+				descriptor_pool
+					.allocate_sets(vec![desc_layout; pool_count], &mut buf)
+					.unwrap()
+			};
 			buf
 		};
 
@@ -91,7 +95,7 @@ impl<
 				array_offset: 0,
 				descriptors: once(desc),
 			});
-		device.write_descriptor_sets(writes)
+		unsafe { device.write_descriptor_sets(writes) }
 	}
 
 	pub fn descriptor_set(&self, idx: usize) -> &<Backend as gfx_hal::Backend>::DescriptorSet {
@@ -104,14 +108,14 @@ impl<
 		Vertex: VertexInfo<Vertex>,
 		Uniforms: UniformInfo,
 		Index: IndexType,
-		Constants: PushConstantInfo,
+		Constants: PushConstantInfo<Constants>,
 	> Drop for DescriptorPool<'a, Vertex, Uniforms, Index, Constants>
 {
 	fn drop(&mut self) {
 		let device = &self.shader.data.device;
 		let pool = MaybeUninit::take(&mut self.descriptor_pool);
 		//        pool.free_sets(self.descriptor_sets.drain(..));
-		device.destroy_descriptor_pool(pool);
+		unsafe { device.destroy_descriptor_pool(pool); }
 		println!("Dropped Descriptors");
 	}
 }

@@ -51,7 +51,7 @@ impl<'a> RenderPass<'a> {
 		println!("Creating Renderpass");
 		let device = &swapchain.data.device;
 		let render_pass = {
-			let (capabilities, formats, _) = swapchain
+			let (capabilities, formats, _, _) = swapchain
 				.data
 				.surface
 				.borrow()
@@ -98,13 +98,15 @@ impl<'a> RenderPass<'a> {
 					(Access::COLOR_ATTACHMENT_READ | Access::COLOR_ATTACHMENT_WRITE),
 			};
 
-			device
-				.create_render_pass(
-					&[color_attachment, depth_attachment],
-					&[subpass],
-					&[dependency],
-				)
-				.unwrap()
+			unsafe {
+				device
+					.create_render_pass(
+						&[color_attachment, depth_attachment],
+						&[subpass],
+						&[dependency],
+					)
+					.unwrap()
+			}
 		};
 		RenderPass {
 			swapchain,
@@ -148,7 +150,7 @@ impl<'a> RenderPass<'a> {
 		Vertex: VertexInfo<Vertex>,
 		Uniforms: UniformInfo,
 		Index: IndexType,
-		Constants: PushConstantInfo,
+		Constants: PushConstantInfo<Constants>,
 	>(
 		&'a self,
 		shader: &'a Shader<'a, Vertex, Uniforms, Index, Constants>,
@@ -160,7 +162,9 @@ impl<'a> RenderPass<'a> {
 impl<'a> Drop for RenderPass<'a> {
 	fn drop(&mut self) {
 		let device = &self.swapchain.data.device;
-		device.destroy_render_pass(MaybeUninit::take(&mut self.pass));
+		unsafe {
+			device.destroy_render_pass(MaybeUninit::take(&mut self.pass));
+		}
 		println!("Dropped Renderpass");
 	}
 }

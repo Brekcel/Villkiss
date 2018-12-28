@@ -19,7 +19,7 @@ impl<'a> Sampler<'a> {
 	pub(crate) fn create(data: &'a HALData, sampler_info: SamplerInfo) -> Sampler {
 		println!("Creating Sampler");
 		let device = &data.device;
-		let sampler = device.create_sampler(sampler_info).unwrap();
+		let sampler = unsafe { device.create_sampler(sampler_info).unwrap() };
 		Sampler {
 			data,
 			sampler: MaybeUninit::new(sampler),
@@ -34,7 +34,9 @@ impl<'a> Sampler<'a> {
 impl<'a> Drop for Sampler<'a> {
 	fn drop(&mut self) {
 		let device = &self.data.device;
-		device.destroy_sampler(MaybeUninit::take(&mut self.sampler));
+		unsafe {
+			device.destroy_sampler(MaybeUninit::take(&mut self.sampler));
+		}
 		println!("Dropped Sampler");
 	}
 }

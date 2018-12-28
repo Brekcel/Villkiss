@@ -14,7 +14,7 @@ pub struct Fence<'a> {
 }
 
 impl<'a> Fence<'a> {
-	pub(crate) fn create(data: &'a HALData) -> Fence<'a> {
+	pub(crate) fn create(data: &HALData) -> Fence {
 		println!("Creating Fence");
 		let fence = data.device.create_fence(true).unwrap();
 		Fence {
@@ -23,21 +23,23 @@ impl<'a> Fence<'a> {
 		}
 	}
 
-	pub fn create_n(data: &'a HALData, num: usize) -> Box<[Fence<'a>]> {
-		(0..num)
-			.map(|_| Self::create(data))
-			.collect::<Vec<_>>()
-			.into_boxed_slice()
-	}
-
 	pub fn reset(&self) {
 		let fence = self.fence();
-		self.data.device.reset_fence(fence).unwrap();
+		unsafe {
+			self.data.device.reset_fence(fence).unwrap();
+		}
 	}
 
 	pub fn wait(&self) {
 		let fence = self.fence();
-		self.data.device.wait_for_fence(fence, !0).unwrap();
+		unsafe {
+			self.data.device.wait_for_fence(fence, !0).unwrap();
+		}
+	}
+
+	pub fn wait_n_reset(&self) {
+		self.wait();
+		self.reset();
 	}
 
 	pub fn fence(&self) -> &<Backend as gfx_hal::Backend>::Fence { unsafe { self.fence.get_ref() } }
@@ -50,7 +52,9 @@ impl<'a> Fence<'a> {
 impl<'a> Drop for Fence<'a> {
 	fn drop(&mut self) {
 		let device = &self.data.device;
-		device.destroy_fence(MaybeUninit::take(&mut self.fence));
+		unsafe {
+			device.destroy_fence(MaybeUninit::take(&mut self.fence));
+		}
 		println!("Dropped Fence")
 	}
 }

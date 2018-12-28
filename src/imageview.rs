@@ -40,9 +40,11 @@ impl<'a> ImageView<'a> {
 			levels: 0..mip_levels,
 			layers: 0..1,
 		};
-		let view = device
-			.create_image_view(image, kind, format, Swizzle::NO, sub_range)
-			.unwrap();
+		let view = unsafe {
+			device
+				.create_image_view(image, kind, format, Swizzle::NO, sub_range)
+				.unwrap()
+		};
 		ImageView {
 			data,
 			view: MaybeUninit::new(view),
@@ -57,7 +59,9 @@ impl<'a> ImageView<'a> {
 impl<'a> Drop for ImageView<'a> {
 	fn drop(&mut self) {
 		let device = &self.data.device;
-		device.destroy_image_view(MaybeUninit::take(&mut self.view));
+		unsafe {
+			device.destroy_image_view(MaybeUninit::take(&mut self.view));
+		}
 		println!("Dropped ImageView");
 	}
 }

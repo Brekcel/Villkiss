@@ -12,10 +12,12 @@ use gfx_hal::{
 	image::{
 		Extent,
 		Kind,
+		WrapMode,
 	},
 	window::Extent2D,
 	AcquireError,
 	Backbuffer,
+	CompositeAlpha,
 	Device,
 	FrameSync,
 	PresentMode,
@@ -58,7 +60,7 @@ impl<'a> Swapchain<'a> {
 	pub(crate) fn create<'b>(data: &'a HALData, pool: &'a BufferPool<'a>) -> Swapchain<'a> {
 		println!("Creating Swapchain");
 		let device = &data.device;
-		let (capabilities, formats, _) = data
+		let (capabilities, formats, _, composite_alpha) = data
 			.surface
 			.borrow()
 			.compatibility(&data.adapter.physical_device);
@@ -69,24 +71,31 @@ impl<'a> Swapchain<'a> {
 				.unwrap(),
 			None => Format::Rgba8Srgb,
 		};
-		let swap_config = SwapchainConfig::from_caps(
-			&capabilities,
-			surface_color_format,
-			Extent2D {
-				width: 800,
-				height: 600,
-			},
-		)
-		.with_mode(PresentMode::Mailbox);
+		let swap_config = {
+			let mut swap_config = SwapchainConfig::from_caps(
+				&capabilities,
+				surface_color_format,
+				Extent2D {
+					width: 800,
+					height: 600,
+				},
+			)
+			.with_mode(PresentMode::Mailbox);
+			swap_config.composite_alpha = *composite_alpha.get(0).unwrap_or(&CompositeAlpha::Inherit);
+			swap_config
+		};
 		let dims = swap_config.extent.to_extent();
-		let (swapchain, backbuffer) = device
-			.create_swapchain(&mut data.surface.borrow_mut(), swap_config, None)
-			.unwrap();
+		let (swapchain, backbuffer) = unsafe {
+			device
+				.create_swapchain(&mut data.surface.borrow_mut(), swap_config, None)
+				.unwrap()
+		};
 		let depth_tex = pool.create_texture(TextureInfo {
 			kind: Kind::D2(dims.width, dims.height, 1, 1),
 			format: Format::D32FloatS8Uint,
 			mipmaps: MipMaps::None,
 			pixels: None,
+			wrap_mode: (WrapMode::Border, WrapMode::Border, WrapMode::Border),
 		});
 		//		#[cfg(not(feature = "gl"))]
 		let image_views = match backbuffer {
@@ -125,9 +134,12 @@ impl<'a> Swapchain<'a> {
 	}
 
 	pub fn acquire_next_image<'b>(&'b self, sem: &'b mut Semaphore) -> Result<u32, AcquireError> {
-		unsafe { self.swapchain.get_ref() }
-			.borrow_mut()
-			.acquire_image(!0, FrameSync::Semaphore(sem.semaphore()))
+		unsafe {
+			self.swapchain
+				.get_ref()
+				.borrow_mut()
+				.acquire_image(!0, FrameSync::Semaphore(sem.semaphore()))
+		}
 	}
 
 	pub fn image_count(&self) -> usize {
@@ -147,7 +159,9 @@ impl<'a> Drop for Swapchain<'a> {
 	fn drop(&mut self) {
 		let device = &self.data.device;
 		//		#[cfg(not(feature = "gl"))]
-		device.destroy_swapchain(RefCell::into_inner(MaybeUninit::take(&mut self.swapchain)));
+		unsafe {
+			device.destroy_swapchain(RefCell::into_inner(MaybeUninit::take(&mut self.swapchain)));
+		}
 		println!("Dropped Swapchain");
 	}
 }

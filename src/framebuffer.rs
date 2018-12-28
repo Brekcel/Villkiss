@@ -27,7 +27,7 @@ impl<'a> FrameBuffer<'a> {
 		let frames = views
 			.iter()
 			.enumerate()
-			.map(|(i, iv)| {
+			.map(|(i, iv)| unsafe {
 				device
 					.create_framebuffer(pass.pass(), iv.iter().map(|i| i.view()), sizes[i])
 					.unwrap()
@@ -76,7 +76,7 @@ impl<'a> Drop for FrameBuffer<'a> {
 		let device = &self.pass.swapchain.data.device;
 		self.frames
 			.drain(..)
-			.for_each(|frame| device.destroy_framebuffer(frame));
+			.for_each(|frame| unsafe { device.destroy_framebuffer(frame) });
 		println!("Dropped Framebuffer");
 	}
 }

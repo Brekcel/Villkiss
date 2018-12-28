@@ -37,7 +37,7 @@ pub struct Shader<
 	Vertex: VertexInfo<Vertex>,
 	Uniforms: UniformInfo,
 	Index: IndexType,
-	Constants: PushConstantInfo,
+	Constants: PushConstantInfo<Constants>,
 > {
 	pub(crate) data: &'a HALData,
 	pub(crate) vert_mod: MaybeUninit<<Backend as gfx_hal::Backend>::ShaderModule>,
@@ -82,12 +82,12 @@ pub struct UniformInfoData {
 	pub mutable: bool,
 }
 
-pub trait PushConstantInfo {
+pub trait PushConstantInfo<T> {
 	const STAGES: &'static [ShaderStageFlags];
-	const SIZE: u32;
+	const SIZE: u32 = std::mem::size_of::<T>() as u32;
 }
 
-impl PushConstantInfo for () {
+impl PushConstantInfo<()> for () {
 	const SIZE: u32 = 0;
 	const STAGES: &'static [ShaderStageFlags] = &[];
 }
@@ -97,7 +97,7 @@ impl<
 		Vertex: VertexInfo<Vertex>,
 		Uniforms: UniformInfo,
 		Index: IndexType,
-		Constants: PushConstantInfo,
+		Constants: PushConstantInfo<Constants>,
 	> Shader<'a, Vertex, Uniforms, Index, Constants>
 {
 	pub(crate) fn create<'b>(
@@ -107,8 +107,9 @@ impl<
 	) -> Shader<'a, Vertex, Uniforms, Index, Constants> {
 		println!("Creating Shader");
 		let device = &data.device;
-		let vert_mod = device.create_shader_module(vert).unwrap();
-		let frag_mod = device.create_shader_module(frag).unwrap();
+
+		let vert_mod = unsafe { device.create_shader_module(vert).unwrap() };
+		let frag_mod = unsafe { device.create_shader_module(frag).unwrap() };
 
 		let push_constant_stages = Constants::STAGES
 			.iter()
@@ -135,14 +136,15 @@ impl<
 			} else {
 				vec![(push_constant_stages, 0..Constants::SIZE)]
 			};
-
-			let desc_layout = device
-				.create_descriptor_set_layout(&layout_bindings, &[])
-				.unwrap();
-			let pipe_layout = device
-				.create_pipeline_layout(once(&desc_layout), pc_layout)
-				.unwrap();
-			(desc_layout, layout_bindings, pipe_layout)
+			unsafe {
+				let desc_layout = device
+					.create_descriptor_set_layout(&layout_bindings, &[])
+					.unwrap();
+				let pipe_layout = device
+					.create_pipeline_layout(once(&desc_layout), pc_layout)
+					.unwrap();
+				(desc_layout, layout_bindings, pipe_layout)
+			}
 		};
 
 		let vertex_desc = VertexBufferDesc {
@@ -256,16 +258,18 @@ impl<
 		Vertex: VertexInfo<Vertex>,
 		Uniforms: UniformInfo,
 		Index: IndexType,
-		Constants: PushConstantInfo,
+		Constants: PushConstantInfo<Constants>,
 	> Drop for Shader<'a, Vertex, Uniforms, Index, Constants>
 {
 	fn drop(&mut self) {
 		let device = &self.data.device;
-		device.destroy_shader_module(MaybeUninit::take(&mut self.vert_mod));
-		device.destroy_shader_module(MaybeUninit::take(&mut self.frag_mod));
+		unsafe {
+			device.destroy_shader_module(MaybeUninit::take(&mut self.vert_mod));
+			device.destroy_shader_module(MaybeUninit::take(&mut self.frag_mod));
 
-		device.destroy_descriptor_set_layout(MaybeUninit::take(&mut self.descriptor_layout));
-		device.destroy_pipeline_layout(MaybeUninit::take(&mut self.pipeline_layout));
+			device.destroy_descriptor_set_layout(MaybeUninit::take(&mut self.descriptor_layout));
+			device.destroy_pipeline_layout(MaybeUninit::take(&mut self.pipeline_layout));
+		}
 		println!("Dropped Shader");
 	}
 }

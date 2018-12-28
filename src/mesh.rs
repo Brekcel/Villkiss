@@ -1,4 +1,5 @@
 use std::{
+	borrow::BorrowMut,
 	iter::once,
 	mem::{
 		align_of,
@@ -35,7 +36,7 @@ pub struct Mesh<
 	Vertex: VertexInfo<Vertex>,
 	Uniforms: UniformInfo,
 	Index: IndexType,
-	Constants: PushConstantInfo,
+	Constants: PushConstantInfo<Constants>,
 > {
 	shader: &'a Shader<'a, Vertex, Uniforms, Index, Constants>,
 	vert_offset: u64,
@@ -51,7 +52,7 @@ impl<
 		Vertex: VertexInfo<Vertex>,
 		Uniforms: UniformInfo,
 		Index: IndexType,
-		Constants: PushConstantInfo,
+		Constants: PushConstantInfo<Constants>,
 	> Mesh<'a, Vertex, Uniforms, Index, Constants>
 {
 	pub(crate) fn create(
@@ -60,7 +61,7 @@ impl<
 		vertices: Vec<Vertex>,
 		indices: Vec<Index>,
 		descriptors: &[Vec<Descriptor<Backend>>],
-	) -> Mesh<'a, Vertex, Uniforms, Index, Constants> {
+	) -> Mesh<'a,Vertex, Uniforms, Index, Constants> {
 		let (vert_offset, index_offset) = {
 			let vert_offset = 0;
 			let mut index_offset = size_of::<Vertex>() * vertices.len();
@@ -90,33 +91,39 @@ impl<
 
 	pub(crate) fn draw(
 		&self,
-		encoder: &mut RenderSubpassCommon<Backend>,
+		encoder: &mut RenderSubpassCommon<
+			Backend,
+			impl BorrowMut<<Backend as gfx_hal::Backend>::CommandBuffer>,
+		>,
 		descriptor_idx: usize,
 		push_constants: Constants,
 	) {
-		encoder.bind_vertex_buffers(0, once((self.buffer.buffer(), self.vert_offset)));
-		encoder.bind_index_buffer(IndexBufferView {
-			buffer: self.buffer.buffer(),
-			offset: self.index_offset,
-			index_type: Index::HAL,
-		});
-		encoder.bind_graphics_descriptor_sets(
-			self.shader.pipe_layout(),
-			0,
-			once(self.descriptor_pool.descriptor_set(descriptor_idx)),
-			&[],
-		);
-		if Constants::SIZE != 0 {
-			let pc_ptr = &push_constants as *const Constants as *const u32;
-			let slice =
-				unsafe { slice::from_raw_parts(pc_ptr, size_of::<Constants>() / size_of::<u32>()) };
-			encoder.push_graphics_constants(
+		unsafe {
+			encoder.bind_vertex_buffers(0, once((self.buffer.buffer(), self.vert_offset)));
+
+			encoder.bind_index_buffer(IndexBufferView {
+				buffer: self.buffer.buffer(),
+				offset: self.index_offset,
+				index_type: Index::HAL,
+			});
+			encoder.bind_graphics_descriptor_sets(
 				self.shader.pipe_layout(),
-				self.shader.push_constant_stages,
 				0,
-				slice,
+				once(self.descriptor_pool.descriptor_set(descriptor_idx)),
+				&[],
 			);
+			if Constants::SIZE != 0 {
+				let pc_ptr = &push_constants as *const Constants as *const u32;
+				let slice =
+					slice::from_raw_parts(pc_ptr, size_of::<Constants>() / size_of::<u32>());
+				encoder.push_graphics_constants(
+					self.shader.pipe_layout(),
+					self.shader.push_constant_stages,
+					0,
+					slice,
+				);
+			}
+			encoder.draw_indexed(0..self.indices.len() as u32, 0, 0..1 as u32);
 		}
-		encoder.draw_indexed(0..self.indices.len() as u32, 0, 0..1 as u32);
 	}
 }

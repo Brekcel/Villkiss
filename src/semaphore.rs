@@ -23,13 +23,6 @@ impl<'a> Semaphore<'a> {
 		}
 	}
 
-	pub(crate) fn create_n(data: &'a HALData, num: usize) -> Box<[Semaphore<'a>]> {
-		(0..num)
-			.map(|_| Self::create(data))
-			.collect::<Vec<_>>()
-			.into_boxed_slice()
-	}
-
 	pub fn semaphore(&self) -> &<Backend as gfx_hal::Backend>::Semaphore {
 		unsafe { self.semaphore.get_ref() }
 	}
@@ -42,7 +35,9 @@ impl<'a> Semaphore<'a> {
 impl<'a> Drop for Semaphore<'a> {
 	fn drop(&mut self) {
 		let device = &self.data.device;
-		device.destroy_semaphore(MaybeUninit::take(&mut self.semaphore));
+		unsafe {
+			device.destroy_semaphore(MaybeUninit::take(&mut self.semaphore));
+		}
 		println!("Dropped Semaphore")
 	}
 }

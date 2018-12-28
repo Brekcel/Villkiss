@@ -1,4 +1,5 @@
 use std::{
+	borrow::BorrowMut,
 	marker::PhantomData,
 	mem::MaybeUninit,
 };
@@ -42,7 +43,7 @@ pub struct Pipeline<
 	Vertex: VertexInfo<Vertex>,
 	Uniforms: UniformInfo,
 	Index: IndexType,
-	Constants: PushConstantInfo,
+	Constants: PushConstantInfo<Constants>,
 > {
 	pass: &'a RenderPass<'a>,
 	pipe: MaybeUninit<<Backend as gfx_hal::Backend>::GraphicsPipeline>,
@@ -54,13 +55,13 @@ pub struct Pipeline<
 
 pub struct BoundPipe<
 	'a,
-	'b: 'a,
+	C: BorrowMut<<Backend as gfx_hal::Backend>::CommandBuffer>,
 	Vertex: VertexInfo<Vertex>,
 	Uniforms: UniformInfo,
 	Index: IndexType,
-	Constants: PushConstantInfo,
+	Constants: PushConstantInfo<Constants>,
 > {
-	encoder: &'a mut RenderSubpassCommon<'b, Backend>,
+	encoder: &'a mut RenderSubpassCommon<Backend, C>,
 	vert_phantom: PhantomData<Vertex>,
 	uniforms_phantom: PhantomData<Uniforms>,
 	index_phantom: PhantomData<Index>,
@@ -72,7 +73,7 @@ impl<
 		Vertex: VertexInfo<Vertex>,
 		Uniforms: UniformInfo,
 		Index: IndexType,
-		Constants: PushConstantInfo,
+		Constants: PushConstantInfo<Constants>,
 	> Pipeline<'a, Vertex, Uniforms, Index, Constants>
 {
 	pub(crate) fn create(
@@ -120,9 +121,11 @@ impl<
 			&mut pipeline_desc.attributes,
 		);
 
-		let pipe = device
-			.create_graphics_pipeline(&pipeline_desc, None)
-			.unwrap();
+		let pipe = unsafe {
+			device
+				.create_graphics_pipeline(&pipeline_desc, None)
+				.unwrap()
+		};
 
 		Pipeline {
 			pass,
@@ -134,12 +137,17 @@ impl<
 		}
 	}
 
-	pub fn bind_pipe<F: FnOnce(&mut BoundPipe<Vertex, Uniforms, Index, Constants>)>(
+	pub fn bind_pipe<
+		C: BorrowMut<<Backend as gfx_hal::Backend>::CommandBuffer>,
+		F: FnOnce(&mut BoundPipe<C, Vertex, Uniforms, Index, Constants>),
+	>(
 		&self,
-		encoder: &mut RenderSubpassCommon<Backend>,
+		encoder: &mut RenderSubpassCommon<Backend, C>,
 		draws: F,
 	) {
-		encoder.bind_graphics_pipeline(unsafe { self.pipe.get_ref() });
+		unsafe {
+			encoder.bind_graphics_pipeline(self.pipe.get_ref());
+		}
 		let mut bp = BoundPipe {
 			encoder,
 			vert_phantom: PhantomData,
@@ -153,12 +161,12 @@ impl<
 
 impl<
 		'a,
-		'b: 'a,
+		C: BorrowMut<<Backend as gfx_hal::Backend>::CommandBuffer>,
 		Vertex: VertexInfo<Vertex>,
 		Uniforms: UniformInfo,
 		Index: IndexType,
-		Constants: PushConstantInfo,
-	> BoundPipe<'a, 'b, Vertex, Uniforms, Index, Constants>
+		Constants: PushConstantInfo<Constants>,
+	> BoundPipe<'a, C, Vertex, Uniforms, Index, Constants>
 {
 	pub fn draw_mesh(
 		&mut self,
@@ -175,12 +183,14 @@ impl<
 		Vertex: VertexInfo<Vertex>,
 		Uniforms: UniformInfo,
 		Index: IndexType,
-		Constants: PushConstantInfo,
+		Constants: PushConstantInfo<Constants>,
 	> Drop for Pipeline<'a, Vertex, Uniforms, Index, Constants>
 {
 	fn drop(&mut self) {
 		let device = &self.pass.swapchain.data.device;
-		device.destroy_graphics_pipeline(MaybeUninit::take(&mut self.pipe));
+		unsafe {
+			device.destroy_graphics_pipeline(MaybeUninit::take(&mut self.pipe));
+		}
 		println!("Dropped Pipeline");
 	}
 }

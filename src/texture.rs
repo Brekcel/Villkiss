@@ -55,6 +55,7 @@ use crate::{
 	gfx_back::Backend,
 	util::TakeExt,
 	BufferPool,
+	Fence,
 	ImageView,
 	Sampler,
 };
@@ -97,6 +98,7 @@ pub struct TextureInfo<'a> {
 	pub format: Format,
 	pub mipmaps: MipMaps,
 	pub pixels: Option<&'a [u8]>,
+	pub wrap_mode: (WrapMode, WrapMode, WrapMode),
 }
 
 impl<'a> Texture<'a> {
@@ -120,7 +122,7 @@ impl<'a> Texture<'a> {
 					min_filter: Filter::Linear,
 					mag_filter: Filter::Linear,
 					mip_filter: Filter::Linear,
-					wrap_mode: (WrapMode::Tile, WrapMode::Tile, WrapMode::Tile),
+					wrap_mode: info.wrap_mode,
 					lod_bias: 0f32.into(),
 					lod_range: 0f32.into()..((mip_levels as f32) / 8f32).into(),
 					comparison: None,
@@ -135,25 +137,26 @@ impl<'a> Texture<'a> {
 			let sampler = None;
 			(usage, aspects, sampler)
 		};
-
 		let (image, block) = Texture::image_block(pool, &info, usage);
+		let fence = data.create_fence();
+		fence.reset();
 		info.pixels.map_or_else(
 			|| {
 				pool.command_pool
-					.single_submit(false, &[], &[], None, |cmd_buf| {
+					.single_submit(&[], &[], &fence, |cmd_buf| {
 						Self::transition_image_layout(
 							cmd_buf,
 							&image,
 							0,
 							Layout::Undefined..Layout::DepthStencilAttachmentOptimal,
 						);
-					});
+					})
 			},
 			|pixels| {
 				let staged = unsafe { pool.staging_buf.get_ref() };
 				staged.upload(pixels, device);
 				pool.command_pool
-					.single_submit(false, &[], &[], None, |cmd_buf| {
+					.single_submit(&[], &[], &fence, |cmd_buf| {
 						let range = match info.mipmaps {
 							MipMaps::PreExisting(i) => 0..i,
 							_ => 0..1,
@@ -177,12 +180,14 @@ impl<'a> Texture<'a> {
 								level,
 								Layout::Undefined..Layout::TransferDstOptimal,
 							);
-							cmd_buf.copy_buffer_to_image(
-								&staged.buffer,
-								&image,
-								Layout::TransferDstOptimal,
-								once(copy),
-							);
+							unsafe {
+								cmd_buf.copy_buffer_to_image(
+									&staged.buffer,
+									&image,
+									Layout::TransferDstOptimal,
+									once(copy),
+								);
+							}
 							Self::transition_image_layout(
 								cmd_buf,
 								&image,
@@ -190,14 +195,14 @@ impl<'a> Texture<'a> {
 								Layout::TransferDstOptimal..Layout::ShaderReadOnlyOptimal,
 							);
 						}
-					});
+					})
 			},
 		);
+		fence.wait_n_reset();
 		match info.mipmaps {
-			MipMaps::Generate => Self::gen_mipmaps(&image, &pool, info),
+			MipMaps::Generate => Self::gen_mipmaps(&image, &pool, info, &fence),
 			_ => (),
 		}
-
 		let kind = match info.kind {
 			Kind::D1(_, _) => ViewKind::D1,
 			Kind::D2(_, _, _, _) => ViewKind::D2,
@@ -227,58 +232,65 @@ impl<'a> Texture<'a> {
 	) {
 		let device = &pool.data.device;
 		let mips = info.mipmaps.levels(*info);
-		let unbound_image = device
-			.create_image(
-				info.kind,
-				mips,
-				info.format,
-				Tiling::Optimal,
-				usage,
-				ViewCapabilities::empty(),
-			)
-			.unwrap();
-		let reqs = device.get_image_requirements(&unbound_image);
-		let block = unsafe { pool.allocator.get_ref() }
-			.borrow_mut()
-			.alloc(device, (Type::General, Properties::DEVICE_LOCAL), reqs)
-			.unwrap();
-		let image = device
-			.bind_image_memory(block.memory(), block.range().start, unbound_image)
-			.unwrap();
-		(image, block)
+		unsafe {
+			let mut image = device
+				.create_image(
+					info.kind,
+					mips,
+					info.format,
+					Tiling::Optimal,
+					usage,
+					ViewCapabilities::empty(),
+				)
+				.unwrap();
+			let reqs = device.get_image_requirements(&image);
+			let block = pool
+				.allocator
+				.get_ref()
+				.borrow_mut()
+				.alloc(device, (Type::General, Properties::DEVICE_LOCAL), reqs)
+				.unwrap();
+			device
+				.bind_image_memory(block.memory(), block.range().start, &mut image)
+				.unwrap();
+			(image, block)
+		}
 	}
 
 	fn gen_mipmaps(
 		image: &<Backend as gfx_hal::Backend>::Image,
 		pool: &BufferPool,
 		info: TextureInfo,
+		fence: &Fence,
 	) {
-		pool.command_pool
-			.single_submit(false, &[], &[], None, |buffer| {
-				let (mut width, mut height) = {
-					let extent = info.kind.extent();
-					(extent.width, extent.height)
+		pool.command_pool.single_submit(&[], &[], fence, |buffer| {
+			let (mut width, mut height) = {
+				let extent = info.kind.extent();
+				(extent.width, extent.height)
+			};
+			let levels = info.mipmaps.levels(info);
+			for i in 1..levels {
+				let level = i - 1;
+				let range = SubresourceRange {
+					aspects: Aspects::COLOR,
+					levels: level..(level + 1),
+					layers: 0..1,
 				};
-				let levels = info.mipmaps.levels(info);
-				for i in 1..levels {
-					let level = i - 1;
-					let range = SubresourceRange {
-						aspects: Aspects::COLOR,
-						levels: level..(level + 1),
-						layers: 0..1,
-					};
-					let init_barrier = Barrier::Image {
-						states: (Access::TRANSFER_WRITE, Layout::TransferDstOptimal)..
-							(Access::TRANSFER_READ, Layout::TransferSrcOptimal),
-						target: image,
-						families: None,
-						range: range.clone(),
-					};
+				let init_barrier = Barrier::Image {
+					states: (Access::TRANSFER_WRITE, Layout::TransferDstOptimal)..
+						(Access::TRANSFER_READ, Layout::TransferSrcOptimal),
+					target: image,
+					families: None,
+					range: range.clone(),
+				};
+
+				unsafe {
 					buffer.pipeline_barrier(
 						PipelineStage::TRANSFER..PipelineStage::TRANSFER,
 						Dependencies::empty(),
 						once(init_barrier),
 					);
+
 					let blit = ImageBlit {
 						src_subresource: SubresourceLayers {
 							aspects: Aspects::COLOR,
@@ -321,30 +333,34 @@ impl<'a> Texture<'a> {
 						Dependencies::empty(),
 						once(fin_barrier),
 					);
+
 					if width > 1 {
 						width /= 2;
 					}
 					if height > 1 {
 						height /= 2;
 					}
+
+					let fin_barrier = Barrier::Image {
+						states: (Access::TRANSFER_READ, Layout::TransferSrcOptimal)..
+							(Access::SHADER_READ, Layout::ShaderReadOnlyOptimal),
+						target: image,
+						families: None,
+						range: SubresourceRange {
+							aspects: Aspects::COLOR,
+							levels: levels - 1..levels,
+							layers: 0..1,
+						},
+					};
+					buffer.pipeline_barrier(
+						PipelineStage::TRANSFER..PipelineStage::FRAGMENT_SHADER,
+						Dependencies::empty(),
+						once(fin_barrier),
+					);
 				}
-				let fin_barrier = Barrier::Image {
-					states: (Access::TRANSFER_READ, Layout::TransferSrcOptimal)..
-						(Access::SHADER_READ, Layout::ShaderReadOnlyOptimal),
-					target: image,
-					families: None,
-					range: SubresourceRange {
-						aspects: Aspects::COLOR,
-						levels: levels - 1..levels,
-						layers: 0..1,
-					},
-				};
-				buffer.pipeline_barrier(
-					PipelineStage::TRANSFER..PipelineStage::FRAGMENT_SHADER,
-					Dependencies::empty(),
-					once(fin_barrier),
-				);
-			})
+			}
+		});
+		fence.wait_n_reset();
 	}
 
 	fn transition_image_layout(
@@ -392,7 +408,9 @@ impl<'a> Texture<'a> {
 			},
 		};
 
-		cmd_buf.pipeline_barrier(stage, Dependencies::empty(), once(&mem_barrier));
+		unsafe {
+			cmd_buf.pipeline_barrier(stage, Dependencies::empty(), once(&mem_barrier));
+		}
 	}
 
 	pub(crate) fn image(&self) -> &<Backend as gfx_hal::Backend>::Image {
@@ -419,10 +437,15 @@ impl<'a> Drop for Texture<'a> {
 	fn drop(&mut self) {
 		let img = MaybeUninit::take(&mut self.image);
 		let device = &self.pool.data.device;
-		unsafe { self.pool.allocator.get_ref() }
-			.borrow_mut()
-			.free(device, MaybeUninit::take(&mut self.block));
-		device.destroy_image(img);
+		unsafe {
+			self.pool
+				.allocator
+				.get_ref()
+				.borrow_mut()
+				.free(device, MaybeUninit::take(&mut self.block));
+
+			device.destroy_image(img);
+		}
 		println!("Dropped Texture");
 	}
 }

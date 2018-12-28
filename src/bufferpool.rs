@@ -1,5 +1,8 @@
 use std::{
-	cell::RefCell,
+	cell::{
+		Cell,
+		RefCell,
+	},
 	mem::{
 		size_of,
 		MaybeUninit,
@@ -32,31 +35,34 @@ use crate::{
 	util::TakeExt,
 	Buffer,
 	CommandPool,
+	Fence,
 	HALData,
 };
 
 pub struct BufferPool<'a> {
 	pub(crate) data: &'a HALData,
-	pub(crate) command_pool: &'a CommandPool<'a>,
+	pub(crate) command_pool: CommandPool<'a>,
 	pub(crate) allocator: MaybeUninit<RefCell<SmartAllocator<Backend>>>,
-	pub(crate) staging_buf: MaybeUninit<StagingBuffer>,
+	pub(crate) staging_buf: MaybeUninit<StagingBuffer<'a>>,
 }
 
 //DUMB Storage struct. HAS to be manually dropped.
-pub(crate) struct StagingBuffer {
+pub(crate) struct StagingBuffer<'a> {
 	pub(crate) block: <SmartAllocator<Backend> as MemoryAllocator<Backend>>::Block,
 	pub(crate) buffer: <Backend as gfx_hal::Backend>::Buffer,
+	pub(crate) fence: Fence<'a>,
+	pub(crate) buf_uses: Cell<usize>,
 }
 
 impl<'a> BufferPool<'a> {
-	pub(crate) fn create(command_pool: &'a CommandPool) -> BufferPool<'a> {
+	pub(crate) fn create(data: &'a HALData) -> BufferPool<'a> {
 		println!("Creating BufferPool");
-		let data = &command_pool.data;
 		let device = &data.device;
 		let phys_device = &data.adapter.physical_device;
 		let mut allocator =
 			SmartAllocator::new(phys_device.memory_properties(), 4096, 8, 64, 134217728);
 		let staging_buf = StagingBuffer::create(data, &mut allocator);
+		let command_pool = data.create_command_pool();
 		BufferPool {
 			data,
 			command_pool,
@@ -92,9 +98,11 @@ impl<'a> Drop for BufferPool<'a> {
 			&self.data,
 			&mut unsafe { self.allocator.get_ref() }.borrow_mut(),
 		);
-		RefCell::into_inner(MaybeUninit::take(&mut self.allocator))
-			.dispose(&device)
-			.unwrap();
+		unsafe {
+			RefCell::into_inner(MaybeUninit::take(&mut self.allocator))
+				.dispose(&device)
+				.unwrap();
+		}
 		println!("Dropped BufferPool");
 	}
 }
@@ -103,29 +111,38 @@ impl<'a> Drop for BufferPool<'a> {
 //2usize.pow(26)
 const STAGING_BUF_SIZE: usize = 67108864;
 
-impl StagingBuffer {
-	fn create(data: &HALData, allocator: &mut SmartAllocator<Backend>) -> StagingBuffer {
+impl<'a> StagingBuffer<'a> {
+	fn create<'b>(data: &'a HALData, allocator: &'b mut SmartAllocator<Backend>) -> StagingBuffer<'a> {
 		println!("Creating StagingBuffer");
-		let device = &data.device;
-		let unbound_buf = device
-			.create_buffer(STAGING_BUF_SIZE as buffer::Offset, Usage::TRANSFER_SRC)
-			.unwrap();
-		let reqs = device.get_buffer_requirements(&unbound_buf);
-		let block = allocator
-			.alloc(
-				device,
-				(
-					Type::General,
-					Properties::CPU_VISIBLE | Properties::COHERENT,
-				),
-				reqs,
-			)
-			.unwrap();
-		let buffer = device
-			.bind_buffer_memory(block.memory(), block.range().start, unbound_buf)
-			.unwrap();
 
-		StagingBuffer { block, buffer }
+		unsafe {
+			let device = &data.device;
+
+			let mut buffer = device
+				.create_buffer(STAGING_BUF_SIZE as buffer::Offset, Usage::TRANSFER_SRC)
+				.unwrap();
+			let reqs = device.get_buffer_requirements(&buffer);
+			let block = allocator
+				.alloc(
+					device,
+					(
+						Type::General,
+						Properties::CPU_VISIBLE | Properties::COHERENT,
+					),
+					reqs,
+				)
+				.unwrap();
+			device
+				.bind_buffer_memory(block.memory(), block.range().start, &mut buffer)
+				.unwrap();
+			let fence = data.create_fence();
+			StagingBuffer {
+				block,
+				buffer,
+				fence,
+				buf_uses: Cell::new(0),
+			}
+		}
 	}
 
 	pub(crate) fn upload<T>(&self, data: &[T], device: &<Backend as gfx_hal::Backend>::Device) {
@@ -134,8 +151,11 @@ impl StagingBuffer {
 
 	fn manual_drop(self, data: &HALData, alloc: &mut SmartAllocator<Backend>) {
 		let device = &data.device;
-		device.destroy_buffer(self.buffer);
-		alloc.free(device, self.block);
+		unsafe {
+			device.destroy_buffer(self.buffer);
+
+			alloc.free(device, self.block);
+		}
 		println!("Dropped StagingBuffer");
 	}
 }
