@@ -47,10 +47,7 @@ pub struct Pipeline<
 > {
 	pass: &'a RenderPass<'a>,
 	pipe: MaybeUninit<<Backend as gfx_hal::Backend>::GraphicsPipeline>,
-	vert_phantom: PhantomData<Vertex>,
-	uniforms_phantom: PhantomData<Uniforms>,
-	index_phantom: PhantomData<Index>,
-	constants_phantom: PhantomData<Constants>,
+	phantom: PhantomData<(Vertex, Uniforms, Index, Constants)>,
 }
 
 pub struct BoundPipe<
@@ -62,10 +59,7 @@ pub struct BoundPipe<
 	Constants: PushConstantInfo<Constants>,
 > {
 	encoder: &'a mut RenderSubpassCommon<Backend, C>,
-	vert_phantom: PhantomData<Vertex>,
-	uniforms_phantom: PhantomData<Uniforms>,
-	index_phantom: PhantomData<Index>,
-	constants_phantom: PhantomData<Constants>,
+	phantom: PhantomData<(Vertex, Uniforms, Index, Constants)>,
 }
 
 impl<
@@ -130,10 +124,7 @@ impl<
 		Pipeline {
 			pass,
 			pipe: MaybeUninit::new(pipe),
-			vert_phantom: PhantomData,
-			uniforms_phantom: PhantomData,
-			index_phantom: PhantomData,
-			constants_phantom: PhantomData,
+			phantom: PhantomData,
 		}
 	}
 
@@ -150,10 +141,7 @@ impl<
 		}
 		let mut bp = BoundPipe {
 			encoder,
-			vert_phantom: PhantomData,
-			uniforms_phantom: PhantomData,
-			index_phantom: PhantomData,
-			constants_phantom: PhantomData,
+			phantom: PhantomData,
 		};
 		draws(&mut bp);
 	}

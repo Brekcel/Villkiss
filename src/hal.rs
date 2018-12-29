@@ -91,10 +91,9 @@ impl<'a> HALData {
 		Constants: PushConstantInfo<Constants>,
 	>(
 		&'a self,
-		vert: &'b [u8],
-		frag: &'b [u8],
+		shaders: ShaderModData<'b>,
 	) -> Shader<'a, Vertex, Uniforms, Index, Constants> {
-		Shader::create(self, vert, frag)
+		Shader::create(self, shaders)
 	}
 
 	pub fn create_command_pool(&self) -> CommandPool { CommandPool::create(self) }

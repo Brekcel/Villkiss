@@ -40,19 +40,27 @@ pub struct Shader<
 	Constants: PushConstantInfo<Constants>,
 > {
 	pub(crate) data: &'a HALData,
-	pub(crate) vert_mod: MaybeUninit<<Backend as gfx_hal::Backend>::ShaderModule>,
-	pub(crate) frag_mod: MaybeUninit<<Backend as gfx_hal::Backend>::ShaderModule>,
+	pub(crate) mods: MaybeUninit<ShaderMods>,
 	pub(crate) vertex_desc: VertexBufferDesc,
 	pub(crate) attribute_descs: Vec<AttributeDesc>,
 	pub(crate) layout_bindings: Vec<DescriptorSetLayoutBinding>,
 	pub(crate) descriptor_layout: MaybeUninit<<Backend as gfx_hal::Backend>::DescriptorSetLayout>,
 	pub(crate) pipeline_layout: MaybeUninit<<Backend as gfx_hal::Backend>::PipelineLayout>,
 	pub(crate) push_constant_stages: ShaderStageFlags,
-	vert_phantom: PhantomData<Vertex>,
-	uniforms_phantom: PhantomData<Uniforms>,
-	index_phantom: PhantomData<Index>,
-	constants_phantom: PhantomData<Constants>,
+	phantom: PhantomData<(Vertex, Uniforms, Index, Constants)>,
 }
+
+#[derive(Default)]
+pub struct ShaderSet<T> {
+	pub vertex: T,
+	pub hull: Option<T>,
+	pub domain: Option<T>,
+	pub geometry: Option<T>,
+	pub fragment: Option<T>,
+}
+
+pub type ShaderModData<'a> = ShaderSet<&'a [u8]>;
+type ShaderMods = ShaderSet<<Backend as gfx_hal::Backend>::ShaderModule>;
 
 pub trait IndexType {
 	const HAL: HALIndexType;
@@ -102,14 +110,12 @@ impl<
 {
 	pub(crate) fn create<'b>(
 		data: &'a HALData,
-		vert: &'b [u8],
-		frag: &'b [u8],
+		shaders: ShaderModData<'b>,
 	) -> Shader<'a, Vertex, Uniforms, Index, Constants> {
 		println!("Creating Shader");
 		let device = &data.device;
 
-		let vert_mod = unsafe { device.create_shader_module(vert).unwrap() };
-		let frag_mod = unsafe { device.create_shader_module(frag).unwrap() };
+		let mods = shaders.make_mods(device);
 
 		let push_constant_stages = Constants::STAGES
 			.iter()
@@ -132,9 +138,9 @@ impl<
 				.collect::<Vec<DescriptorSetLayoutBinding>>();
 
 			let pc_layout = if Constants::SIZE == 0 {
-				vec![]
+				None
 			} else {
-				vec![(push_constant_stages, 0..Constants::SIZE)]
+				Some((push_constant_stages, 0..Constants::SIZE))
 			};
 			unsafe {
 				let desc_layout = device
@@ -176,18 +182,14 @@ impl<
 
 		Shader {
 			data,
-			vert_mod: MaybeUninit::new(vert_mod),
-			frag_mod: MaybeUninit::new(frag_mod),
+			mods: MaybeUninit::new(mods),
 			vertex_desc,
 			attribute_descs,
 			layout_bindings,
 			descriptor_layout: MaybeUninit::new(desc_layout),
 			pipeline_layout: MaybeUninit::new(pipe_layout),
 			push_constant_stages,
-			vert_phantom: PhantomData,
-			uniforms_phantom: PhantomData,
-			index_phantom: PhantomData,
-			constants_phantom: PhantomData,
+			phantom: PhantomData,
 		}
 	}
 
@@ -231,25 +233,7 @@ impl<
 	where
 		'a: 'b,
 	{
-		let vert_entry = EntryPoint::<Backend> {
-			entry: "main",
-			module: unsafe { self.vert_mod.get_ref() },
-			specialization: Default::default(),
-		};
-
-		let frag_entry = EntryPoint::<Backend> {
-			entry: "main",
-			module: unsafe { self.frag_mod.get_ref() },
-			specialization: Default::default(),
-		};
-
-		GraphicsShaderSet::<'b, Backend> {
-			vertex: vert_entry,
-			hull: None,
-			domain: None,
-			geometry: None,
-			fragment: Some(frag_entry),
-		}
+		unsafe { self.mods.get_ref() }.make_entry_points()
 	}
 }
 
@@ -264,12 +248,70 @@ impl<
 	fn drop(&mut self) {
 		let device = &self.data.device;
 		unsafe {
-			device.destroy_shader_module(MaybeUninit::take(&mut self.vert_mod));
-			device.destroy_shader_module(MaybeUninit::take(&mut self.frag_mod));
+			MaybeUninit::take(&mut self.mods).man_drop(device);
 
 			device.destroy_descriptor_set_layout(MaybeUninit::take(&mut self.descriptor_layout));
 			device.destroy_pipeline_layout(MaybeUninit::take(&mut self.pipeline_layout));
 		}
 		println!("Dropped Shader");
+	}
+}
+
+impl ShaderModData<'_> {
+	fn make_mods(self, device: &<Backend as gfx_hal::Backend>::Device) -> ShaderMods {
+		unsafe {
+			ShaderMods {
+				vertex: device.create_shader_module(self.vertex).unwrap(),
+				hull: self.hull.map(|h| device.create_shader_module(h).unwrap()),
+				domain: self.domain.map(|h| device.create_shader_module(h).unwrap()),
+				geometry: self
+					.geometry
+					.map(|h| device.create_shader_module(h).unwrap()),
+				fragment: self
+					.fragment
+					.map(|h| device.create_shader_module(h).unwrap()),
+			}
+		}
+	}
+}
+
+impl ShaderMods {
+	fn make_entry_points<'a, 'b>(&'a self) -> GraphicsShaderSet<'b, Backend>
+	where
+		'a: 'b,
+	{
+		fn entry_point<'a, 'b>(
+			shad_mod: &'a Option<<Backend as gfx_hal::Backend>::ShaderModule>,
+		) -> Option<EntryPoint<'b, Backend>>
+		where
+			'a: 'b,
+		{
+			shad_mod.as_ref().map(|m| EntryPoint::<'b, Backend> {
+				entry: "main",
+				module: m,
+				specialization: Default::default(),
+			})
+		}
+		GraphicsShaderSet {
+			vertex: EntryPoint::<'b, Backend> {
+				entry: "main",
+				module: &self.vertex,
+				specialization: Default::default(),
+			},
+			hull: entry_point(&self.hull),
+			domain: entry_point(&self.domain),
+			geometry: entry_point(&self.geometry),
+			fragment: entry_point(&self.fragment),
+		}
+	}
+
+	fn man_drop(self, device: &<Backend as gfx_hal::Backend>::Device) {
+		unsafe {
+			device.destroy_shader_module(self.vertex);
+			self.domain.map(|v| device.destroy_shader_module(v));
+			self.fragment.map(|v| device.destroy_shader_module(v));
+			self.geometry.map(|v| device.destroy_shader_module(v));
+			self.hull.map(|v| device.destroy_shader_module(v));
+		}
 	}
 }

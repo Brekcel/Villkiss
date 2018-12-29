@@ -98,6 +98,7 @@ impl<'a> Drop for CommandPool<'a> {
 	fn drop(&mut self) {
 		let device = &self.data.device;
 		unsafe {
+			self.reset();
 			device.destroy_command_pool(
 				RefCell::into_inner(MaybeUninit::take(&mut self.pool)).into_raw(),
 			);

@@ -81,7 +81,8 @@ impl<'a> Swapchain<'a> {
 				},
 			)
 			.with_mode(PresentMode::Mailbox);
-			swap_config.composite_alpha = *composite_alpha.get(0).unwrap_or(&CompositeAlpha::Inherit);
+			swap_config.composite_alpha =
+				*composite_alpha.get(0).unwrap_or(&CompositeAlpha::Inherit);
 			swap_config
 		};
 		let dims = swap_config.extent.to_extent();
