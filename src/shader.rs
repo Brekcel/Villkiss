@@ -34,10 +34,10 @@ use crate::{
 
 pub struct Shader<
 	'a,
-	Vertex: VertexInfo<Vertex>,
+	Vertex: VertexInfo,
 	Uniforms: UniformInfo,
 	Index: IndexType,
-	Constants: PushConstantInfo<Constants>,
+	Constants: PushConstantInfo,
 > {
 	pub(crate) data: &'a HALData,
 	pub(crate) mods: MaybeUninit<ShaderMods>,
@@ -74,9 +74,9 @@ impl IndexType for u32 {
 	const HAL: HALIndexType = HALIndexType::U32;
 }
 
-pub trait VertexInfo<T> {
+pub trait VertexInfo {
 	const ATTRIBUTES: &'static [Format];
-	const STRIDE: u32 = std::mem::size_of::<T>() as u32;
+	const STRIDE: u32;
 }
 
 pub trait UniformInfo {
@@ -90,22 +90,22 @@ pub struct UniformInfoData {
 	pub mutable: bool,
 }
 
-pub trait PushConstantInfo<T> {
+pub trait PushConstantInfo {
 	const STAGES: &'static [ShaderStageFlags];
-	const SIZE: u32 = std::mem::size_of::<T>() as u32;
+	const SIZE: u32;
 }
 
-impl PushConstantInfo<()> for () {
+impl PushConstantInfo for () {
 	const SIZE: u32 = 0;
 	const STAGES: &'static [ShaderStageFlags] = &[];
 }
 
 impl<
 		'a,
-		Vertex: VertexInfo<Vertex>,
+		Vertex: VertexInfo,
 		Uniforms: UniformInfo,
 		Index: IndexType,
-		Constants: PushConstantInfo<Constants>,
+		Constants: PushConstantInfo,
 	> Shader<'a, Vertex, Uniforms, Index, Constants>
 {
 	pub(crate) fn create<'b>(
@@ -239,10 +239,10 @@ impl<
 
 impl<
 		'a,
-		Vertex: VertexInfo<Vertex>,
+		Vertex: VertexInfo,
 		Uniforms: UniformInfo,
 		Index: IndexType,
-		Constants: PushConstantInfo<Constants>,
+		Constants: PushConstantInfo,
 	> Drop for Shader<'a, Vertex, Uniforms, Index, Constants>
 {
 	fn drop(&mut self) {
@@ -314,4 +314,133 @@ impl ShaderMods {
 			self.hull.map(|v| device.destroy_shader_module(v));
 		}
 	}
+}
+
+#[macro_export]
+macro_rules! push_constant {
+	//Actual macro
+	(
+		$vis:vis struct $name: ident {
+			const STAGES = [$($stage:ident),*];
+			$($vert_name: ident : $vert_type:ty),*,
+		}
+	) => {
+			#[derive(Debug, Clone, Copy)]
+			#[repr(C)]
+			$vis struct $name {
+				$(
+					pub $vert_name: $vert_type,
+				)*
+			}
+
+			impl ::villkiss::shader::PushConstantInfo for $name {
+				const STAGES: &'static [::villkiss::gfx_hal::pso::ShaderStageFlags] = &[
+					$(
+						::villkiss::gfx_hal::pso::ShaderStageFlags::$stage
+					,)*
+				];
+				const SIZE: u32 = ::std::mem::size_of::<$name>() as u32;
+			}
+		};
+	//No trailing comma
+	(
+		$vis:vis struct $name: ident {
+			const STAGES = [$($stage:ident),*];
+			$($vert_name: ident : $vert_type:ty),*
+		}
+	) => (push_constant!($vis struct $name {const STAGES = [$($stage,)*];$($vert_name: $vert_type,)*}));
+	//No vis
+	(
+		struct $name: ident {
+			const STAGES = [$($stage:ident),*];
+			$($vert_name: ident : $vert_type:ty),*,
+		}
+	) => (push_constant!(pub(self) struct $name {const STAGES = [$($stage,)*];$($vert_name: $vert_type,)*}));
+	//No trailing comma or vis
+	(
+		struct $name: ident {
+			const STAGES = [$($stage:ident),*];
+			$($vert_name: ident : $vert_type:ty),*
+		}
+	) => (push_constant!(struct $name {const STAGES = [$($stage,)*];$($vert_name: $vert_type,)*}));
+}
+
+#[macro_export]
+macro_rules! vertex {
+	//Actual macro
+	(
+		$vis:vis struct $name: ident {
+			$($vert_name: ident : $vert_type:ty as $format_type:ident),*,
+		}
+	) => {
+		#[derive(Debug, Clone, Copy)]
+		#[repr(C)]
+		$vis struct $name {
+			$(
+				pub $vert_name: $vert_type,
+			)*
+		}
+		impl ::villkiss::shader::VertexInfo for $name {
+			const ATTRIBUTES: &'static [::villkiss::gfx_hal::format::Format] = &[
+				$(
+					::villkiss::gfx_hal::format::Format::$format_type,
+				)*
+			];
+			const STRIDE: u32 = std::mem::size_of::<$name>() as u32;
+		}
+	};
+	//No trailing comma
+	(
+		$vis:vis struct $name: ident {
+			$($vert_name: ident : $vert_type:ty as $format_type:ident),*
+		}
+	) => (vertex!{$vis struct $name {$($vert_name: $vert_type as $format_type,)*}});
+	//No vis
+	(
+		struct $name: ident {
+			$($vert_name: ident : $vert_type:ty as $format_type:ident),*,
+		}
+	) => (vertex!{pub(self) struct $name {$($vert_name: $vert_type as $format_type,)*}});
+	//No vis or trailing comma
+	(
+		struct $name: ident {
+			$($vert_name: ident : $vert_type:ty as $format_type:ident),*
+		}
+	) => (vertex!{struct $name {$($vert_name: $vert_type as $format_type,)*}});
+}
+
+#[macro_export]
+macro_rules! uniform {
+	//Actual macro
+	(
+		$vis:vis $name: ident = [
+			$($ui:expr),*,
+		];
+	) => {
+		$vis struct $name;
+		impl ::villkiss::shader::UniformInfo for $name {
+			const UNIFORMS: &'static [shader::UniformInfoData] = &[
+				$($ui,)*
+			];
+		}
+	};
+	//No visibility, Yes trailing comma
+	(
+		$name: ident = [
+			$($ui:expr),*,
+		];
+	) => (uniform!{pub(self) $name = [$($ui,)*];});
+	//Yes visibility, No trailing comma
+	(
+		$vis:vis $name: ident = [
+			$($ui:expr),*
+		];
+	) => (uniform!{$vis $name = [$($ui,)*];});
+	//No trailing comma, no visibility
+	(
+		$name: ident = [
+			$($ui:expr),*
+		];
+	) => (uniform!{$name = [$($ui,)*];});
+
 }

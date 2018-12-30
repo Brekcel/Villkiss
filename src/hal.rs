@@ -85,10 +85,10 @@ impl<'a> HALData {
 
 	pub fn create_shader<
 		'b,
-		Vertex: VertexInfo<Vertex>,
+		Vertex: VertexInfo,
 		Uniforms: UniformInfo,
 		Index: IndexType,
-		Constants: PushConstantInfo<Constants>,
+		Constants: PushConstantInfo,
 	>(
 		&'a self,
 		shaders: ShaderModData<'b>,

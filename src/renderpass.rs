@@ -147,10 +147,10 @@ impl<'a> RenderPass<'a> {
 	}
 
 	pub fn create_pipeline<
-		Vertex: VertexInfo<Vertex>,
+		Vertex: VertexInfo,
 		Uniforms: UniformInfo,
 		Index: IndexType,
-		Constants: PushConstantInfo<Constants>,
+		Constants: PushConstantInfo,
 	>(
 		&'a self,
 		shader: &'a Shader<'a, Vertex, Uniforms, Index, Constants>,

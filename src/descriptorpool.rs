@@ -27,10 +27,10 @@ use crate::{
 
 pub struct DescriptorPool<
 	'a,
-	Vertex: VertexInfo<Vertex>,
+	Vertex: VertexInfo,
 	Uniforms: UniformInfo,
 	Index: IndexType,
-	Constants: PushConstantInfo<Constants>,
+	Constants: PushConstantInfo,
 > {
 	shader: &'a Shader<'a, Vertex, Uniforms, Index, Constants>,
 	descriptor_pool: MaybeUninit<<Backend as gfx_hal::Backend>::DescriptorPool>,
@@ -39,10 +39,10 @@ pub struct DescriptorPool<
 
 impl<
 		'a,
-		Vertex: VertexInfo<Vertex>,
+		Vertex: VertexInfo,
 		Uniforms: UniformInfo,
 		Index: IndexType,
-		Constants: PushConstantInfo<Constants>,
+		Constants: PushConstantInfo,
 	> DescriptorPool<'a, Vertex, Uniforms, Index, Constants>
 {
 	pub(crate) fn create(
@@ -105,10 +105,10 @@ impl<
 
 impl<
 		'a,
-		Vertex: VertexInfo<Vertex>,
+		Vertex: VertexInfo,
 		Uniforms: UniformInfo,
 		Index: IndexType,
-		Constants: PushConstantInfo<Constants>,
+		Constants: PushConstantInfo,
 	> Drop for DescriptorPool<'a, Vertex, Uniforms, Index, Constants>
 {
 	fn drop(&mut self) {

@@ -40,10 +40,10 @@ use crate::{
 
 pub struct Pipeline<
 	'a,
-	Vertex: VertexInfo<Vertex>,
+	Vertex: VertexInfo,
 	Uniforms: UniformInfo,
 	Index: IndexType,
-	Constants: PushConstantInfo<Constants>,
+	Constants: PushConstantInfo,
 > {
 	pass: &'a RenderPass<'a>,
 	pipe: MaybeUninit<<Backend as gfx_hal::Backend>::GraphicsPipeline>,
@@ -53,10 +53,10 @@ pub struct Pipeline<
 pub struct BoundPipe<
 	'a,
 	C: BorrowMut<<Backend as gfx_hal::Backend>::CommandBuffer>,
-	Vertex: VertexInfo<Vertex>,
+	Vertex: VertexInfo,
 	Uniforms: UniformInfo,
 	Index: IndexType,
-	Constants: PushConstantInfo<Constants>,
+	Constants: PushConstantInfo,
 > {
 	encoder: &'a mut RenderSubpassCommon<Backend, C>,
 	phantom: PhantomData<(Vertex, Uniforms, Index, Constants)>,
@@ -64,10 +64,10 @@ pub struct BoundPipe<
 
 impl<
 		'a,
-		Vertex: VertexInfo<Vertex>,
+		Vertex: VertexInfo,
 		Uniforms: UniformInfo,
 		Index: IndexType,
-		Constants: PushConstantInfo<Constants>,
+		Constants: PushConstantInfo,
 	> Pipeline<'a, Vertex, Uniforms, Index, Constants>
 {
 	pub(crate) fn create(
@@ -150,10 +150,10 @@ impl<
 impl<
 		'a,
 		C: BorrowMut<<Backend as gfx_hal::Backend>::CommandBuffer>,
-		Vertex: VertexInfo<Vertex>,
+		Vertex: VertexInfo,
 		Uniforms: UniformInfo,
 		Index: IndexType,
-		Constants: PushConstantInfo<Constants>,
+		Constants: PushConstantInfo,
 	> BoundPipe<'a, C, Vertex, Uniforms, Index, Constants>
 {
 	pub fn draw_mesh(
@@ -168,10 +168,10 @@ impl<
 
 impl<
 		'a,
-		Vertex: VertexInfo<Vertex>,
+		Vertex: VertexInfo,
 		Uniforms: UniformInfo,
 		Index: IndexType,
-		Constants: PushConstantInfo<Constants>,
+		Constants: PushConstantInfo,
 	> Drop for Pipeline<'a, Vertex, Uniforms, Index, Constants>
 {
 	fn drop(&mut self) {

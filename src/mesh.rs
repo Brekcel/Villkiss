@@ -33,10 +33,10 @@ use crate::{
 
 pub struct Mesh<
 	'a,
-	Vertex: VertexInfo<Vertex>,
+	Vertex: VertexInfo,
 	Uniforms: UniformInfo,
 	Index: IndexType,
-	Constants: PushConstantInfo<Constants>,
+	Constants: PushConstantInfo,
 > {
 	shader: &'a Shader<'a, Vertex, Uniforms, Index, Constants>,
 	vert_offset: u64,
@@ -49,10 +49,10 @@ pub struct Mesh<
 
 impl<
 		'a,
-		Vertex: VertexInfo<Vertex>,
+		Vertex: VertexInfo,
 		Uniforms: UniformInfo,
 		Index: IndexType,
-		Constants: PushConstantInfo<Constants>,
+		Constants: PushConstantInfo,
 	> Mesh<'a, Vertex, Uniforms, Index, Constants>
 {
 	pub(crate) fn create(

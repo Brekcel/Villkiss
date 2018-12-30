@@ -33,7 +33,7 @@ pub use crate::{
 	renderpass::RenderPass,
 	sampler::Sampler,
 	semaphore::Semaphore,
-	shader::Shader,
+	shader::{ShaderModData, Shader},
 	swapchain::Swapchain,
 	texture::Texture,
 	window::Window,
