@@ -17,6 +17,7 @@ use gfx_hal::{
 		EntryPoint,
 		GraphicsShaderSet,
 		ShaderStageFlags,
+		Specialization as HAL_Specialization,
 		VertexBufferDesc,
 	},
 	Device,
@@ -52,7 +53,7 @@ pub struct Shader<
 
 #[derive(Default)]
 pub struct ShaderSet<T> {
-	pub vertex: T,
+	pub vertex: Option<T>,
 	pub hull: Option<T>,
 	pub domain: Option<T>,
 	pub geometry: Option<T>,
@@ -112,6 +113,11 @@ impl<
 		data: &'a HALData,
 		shaders: ShaderModData<'b>,
 	) -> Shader<'a, Vertex, Uniforms, Index, Constants> {
+		assert!(
+			std::mem::size_of::<Constants>() % 4 == 0,
+			"Push constants must either be empty, or have a size divisible by 4"
+		);
+
 		println!("Creating Shader");
 		let device = &data.device;
 
@@ -229,11 +235,14 @@ impl<
 		DescriptorPool::create(self, pool_count)
 	}
 
-	pub(crate) fn make_set<'b>(&'a self) -> GraphicsShaderSet<'b, Backend>
+	pub(crate) fn make_set<'b>(
+		&'a self,
+		specialization: ShaderSet<HAL_Specialization<'b>>,
+	) -> GraphicsShaderSet<'b, Backend>
 	where
 		'a: 'b,
 	{
-		unsafe { self.mods.get_ref() }.make_entry_points()
+		unsafe { self.mods.get_ref() }.make_entry_points(specialization)
 	}
 }
 
@@ -261,7 +270,13 @@ impl ShaderModData<'_> {
 	fn make_mods(self, device: &<Backend as gfx_hal::Backend>::Device) -> ShaderMods {
 		unsafe {
 			ShaderMods {
-				vertex: device.create_shader_module(self.vertex).unwrap(),
+				vertex: Some(
+					device
+						.create_shader_module(
+							self.vertex.expect("All shaders must have a Vertex shader"),
+						)
+						.unwrap(),
+				),
 				hull: self.hull.map(|h| device.create_shader_module(h).unwrap()),
 				domain: self.domain.map(|h| device.create_shader_module(h).unwrap()),
 				geometry: self
@@ -276,38 +291,34 @@ impl ShaderModData<'_> {
 }
 
 impl ShaderMods {
-	fn make_entry_points<'a, 'b>(&'a self) -> GraphicsShaderSet<'b, Backend>
+	fn make_entry_points<'a, 'b>(
+		&'a self,
+		specialization: ShaderSet<HAL_Specialization<'b>>,
+	) -> GraphicsShaderSet<'b, Backend>
 	where
 		'a: 'b,
 	{
-		fn entry_point<'a, 'b>(
-			shad_mod: &'a Option<<Backend as gfx_hal::Backend>::ShaderModule>,
-		) -> Option<EntryPoint<'b, Backend>>
-		where
-			'a: 'b,
-		{
+		let entry_point = |shad_mod: &'a Option<<Backend as gfx_hal::Backend>::ShaderModule>,
+		                   specialization: Option<HAL_Specialization<'b>>|
+		 -> Option<EntryPoint<'b, Backend>> {
 			shad_mod.as_ref().map(|m| EntryPoint::<'b, Backend> {
 				entry: "main",
 				module: m,
-				specialization: Default::default(),
+				specialization: specialization.unwrap_or(Default::default()),
 			})
-		}
+		};
 		GraphicsShaderSet {
-			vertex: EntryPoint::<'b, Backend> {
-				entry: "main",
-				module: &self.vertex,
-				specialization: Default::default(),
-			},
-			hull: entry_point(&self.hull),
-			domain: entry_point(&self.domain),
-			geometry: entry_point(&self.geometry),
-			fragment: entry_point(&self.fragment),
+			vertex: entry_point(&self.vertex, specialization.vertex).unwrap(),
+			hull: entry_point(&self.hull, specialization.hull),
+			domain: entry_point(&self.domain, specialization.domain),
+			geometry: entry_point(&self.geometry, specialization.geometry),
+			fragment: entry_point(&self.fragment, specialization.fragment),
 		}
 	}
 
 	fn man_drop(self, device: &<Backend as gfx_hal::Backend>::Device) {
 		unsafe {
-			device.destroy_shader_module(self.vertex);
+			self.vertex.map(|v| device.destroy_shader_module(v));
 			self.domain.map(|v| device.destroy_shader_module(v));
 			self.fragment.map(|v| device.destroy_shader_module(v));
 			self.geometry.map(|v| device.destroy_shader_module(v));

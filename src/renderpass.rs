@@ -27,6 +27,10 @@ use gfx_hal::{
 
 use crate::{
 	gfx_back::Backend,
+	pipeline::{
+		PipeSpecialization,
+		Pipeline,
+	},
 	shader::{
 		IndexType,
 		PushConstantInfo,
@@ -37,7 +41,6 @@ use crate::{
 	util::TakeExt,
 	FrameBuffer,
 	ImageView,
-	Pipeline,
 	Swapchain,
 };
 
@@ -154,8 +157,9 @@ impl<'a> RenderPass<'a> {
 	>(
 		&'a self,
 		shader: &'a Shader<'a, Vertex, Uniforms, Index, Constants>,
+		specialization: PipeSpecialization,
 	) -> Pipeline<'a, Vertex, Uniforms, Index, Constants> {
-		Pipeline::create(self, shader)
+		Pipeline::create(self, shader, specialization)
 	}
 }
 

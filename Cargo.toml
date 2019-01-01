@@ -15,6 +15,7 @@ codegen-units = 1
 [dependencies]
 winit = "^0.18.0"
 cgmath = "^0.16.1"
+byteorder = "^1.2.7"
 
 [features]
 default = []
@@ -28,25 +29,31 @@ vulkan = ["gfx-backend-vulkan"]
 path = "../gfx-memory"
 
 [dependencies.gfx-hal]
-git = "https://github.com/gfx-rs/gfx"
+#git = "https://github.com/gfx-rs/gfx"
+path = "../gfx/src/hal/"
 
 [dependencies.gfx-backend-gl]
-git = "https://github.com/gfx-rs/gfx"
+#git = "https://github.com/gfx-rs/gfx"
+path = "../gfx/src/backend/gl"
 features = ["glutin"]
 optional = true
 
 [dependencies.gfx-backend-vulkan]
-git = "https://github.com/gfx-rs/gfx"
+#git = "https://github.com/gfx-rs/gfx"
+path = "../gfx/src/backend/vulkan"
 optional = true
 
 [target.'cfg(any(target_os = "macos", all(target_os = "ios", target_arch = "aarch64")))'.dependencies.gfx-backend-metal]
-git = "https://github.com/gfx-rs/gfx"
+#git = "https://github.com/gfx-rs/gfx"
+path = "../gfx/src/backend/metal"
 optional = true
 
 [target.'cfg(windows)'.dependencies.gfx-backend-dx12]
-git = "https://github.com/gfx-rs/gfx"
+#git = "https://github.com/gfx-rs/gfx"
+path = "../gfx/src/backend/dx12"
 optional = true
 
 [target.'cfg(windows)'.dependencies.gfx-backend-dx11]
-git = "https://github.com/gfx-rs/gfx"
+#git = "https://github.com/gfx-rs/gfx"
+path = "../gfx/src/backend/dx11"
 optional = true
