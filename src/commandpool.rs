@@ -57,7 +57,7 @@ impl<'a> CommandPool<'a> {
 	pub fn reset(&self) {
 		unsafe {
             let mut pool = self.pool.get_ref().borrow_mut();
-            pool.free(self.buffers.borrow_mut().drain(..));
+			pool.free(self.buffers.borrow_mut().drain(..));
 			pool.reset();
 		}
 	}

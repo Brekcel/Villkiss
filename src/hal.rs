@@ -41,6 +41,7 @@ pub struct HALData {
 
 impl<'a> HALData {
 	pub fn new_hal(name: &str, window: &mut Window) -> HALData {
+		println!("Creating new HAL");
 		#[cfg(not(feature = "gl"))]
 		let instance = gfx_back::Instance::create("Villkiss Engine", 1);
 
@@ -133,5 +134,8 @@ impl<'a> HALData {
 		unsafe { swap.present(queue, frame_idx, present_sems) }
 	}
 
-	pub fn wait_idle(&self) { self.device.wait_idle().unwrap(); }
+	pub fn wait_idle(&self) {
+		self.device.wait_idle().unwrap();
+		self.queue_group.borrow_mut().queues[0].wait_idle().unwrap();
+	}
 }

@@ -219,29 +219,31 @@ impl<
 
 impl SpecializationValue {
 	fn write_data(&self, data: &mut Vec<u8>) -> u16 {
-		unsafe {
-			match *self {
-				SpecializationValue::Bool(b) => {
-					data.push(std::mem::transmute(b));
-					1
-				},
-				SpecializationValue::Double(d) => {
-					data.write_f64::<NE>(d).unwrap();
-					8
-				},
-				SpecializationValue::Float(f) => {
-					data.write_f32::<NE>(f).unwrap();
-					4
-				},
-				SpecializationValue::Int(i) => {
-					data.write_i32::<NE>(i).unwrap();
-					4
-				},
-				SpecializationValue::Uint(u) => {
-					data.write_u32::<NE>(u).unwrap();
-					4
-				},
-			}
+		match *self {
+			SpecializationValue::Bool(b) => {
+				if b {
+					data.write_u32::<NE>(1).unwrap()
+				} else {
+					data.write_u32::<NE>(0).unwrap()
+				}
+				4
+			},
+			SpecializationValue::Double(d) => {
+				data.write_f64::<NE>(d).unwrap();
+				8
+			},
+			SpecializationValue::Float(f) => {
+				data.write_f32::<NE>(f).unwrap();
+				4
+			},
+			SpecializationValue::Int(i) => {
+				data.write_i32::<NE>(i).unwrap();
+				4
+			},
+			SpecializationValue::Uint(u) => {
+				data.write_u32::<NE>(u).unwrap();
+				4
+			},
 		}
 	}
 }
