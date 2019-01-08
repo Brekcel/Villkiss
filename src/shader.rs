@@ -421,12 +421,12 @@ macro_rules! vertex {
 }
 
 #[macro_export]
-macro_rules! uniform {
+macro_rules! descriptor {
 	//Actual macro
 	(
-		$vis:vis $name: ident = [
+		$vis:vis $name: ident = {
 			$($ui:expr),*,
-		];
+		};
 	) => {
 		$vis struct $name;
 		impl ::villkiss::shader::UniformInfo for $name {
@@ -437,21 +437,21 @@ macro_rules! uniform {
 	};
 	//No visibility, Yes trailing comma
 	(
-		$name: ident = [
+		$name: ident = {
 			$($ui:expr),*,
-		];
+		};
 	) => (uniform!{pub(self) $name = [$($ui,)*];});
 	//Yes visibility, No trailing comma
 	(
-		$vis:vis $name: ident = [
+		$vis:vis $name: ident = {
 			$($ui:expr),*
-		];
+		};
 	) => (uniform!{$vis $name = [$($ui,)*];});
 	//No trailing comma, no visibility
 	(
-		$name: ident = [
+		$name: ident = {
 			$($ui:expr),*
-		];
+		};
 	) => (uniform!{$name = [$($ui,)*];});
 
 }
