@@ -112,7 +112,10 @@ impl<'a> Drop for BufferPool<'a> {
 const STAGING_BUF_SIZE: usize = 67108864;
 
 impl<'a> StagingBuffer<'a> {
-	fn create<'b>(data: &'a HALData, allocator: &'b mut SmartAllocator<Backend>) -> StagingBuffer<'a> {
+	fn create<'b>(
+		data: &'a HALData,
+		allocator: &'b mut SmartAllocator<Backend>,
+	) -> StagingBuffer<'a> {
 		println!("Creating StagingBuffer");
 
 		unsafe {

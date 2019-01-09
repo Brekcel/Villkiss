@@ -4,10 +4,10 @@
 #![feature(maybe_uninit)]
 #![feature(nll)]
 
-#[cfg(feature = "dx12")]
-pub use gfx_backend_dx12 as gfx_back;
 #[cfg(feature = "dx11")]
 pub use gfx_backend_dx11 as gfx_back;
+#[cfg(feature = "dx12")]
+pub use gfx_backend_dx12 as gfx_back;
 #[cfg(feature = "gl")]
 pub use gfx_backend_gl as gfx_back;
 #[cfg(feature = "metal")]
@@ -28,12 +28,17 @@ pub use crate::{
 	framebuffer::FrameBuffer,
 	hal::HALData,
 	imageview::ImageView,
-	mesh::Mesh,
-	pipeline::{BoundPipe, Pipeline},
+	pipeline::{
+		BoundPipe,
+		Pipeline,
+	},
 	renderpass::RenderPass,
 	sampler::Sampler,
 	semaphore::Semaphore,
-	shader::{ShaderModData, Shader},
+	shader::{
+		Shader,
+		ShaderModData,
+	},
 	swapchain::Swapchain,
 	texture::Texture,
 	window::Window,
@@ -47,7 +52,6 @@ pub mod fence;
 pub mod framebuffer;
 pub mod hal;
 pub mod imageview;
-pub mod mesh;
 pub mod pipeline;
 pub mod renderpass;
 pub mod sampler;

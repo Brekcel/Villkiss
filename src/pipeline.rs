@@ -1,10 +1,16 @@
 use std::{
 	borrow::BorrowMut,
-	marker::PhantomData,
-	mem::MaybeUninit,
+	iter::once,
+	mem::{
+		size_of,
+		MaybeUninit,
+	},
+	ops::Range,
+	slice,
 };
 
 use gfx_hal::{
+	buffer::IndexBufferView,
 	command::RenderSubpassCommon,
 	pso::{
 		BlendState,
@@ -23,6 +29,8 @@ use gfx_hal::{
 		StencilTest,
 	},
 	Device,
+	IndexCount,
+	InstanceCount,
 	Primitive,
 };
 
@@ -37,7 +45,7 @@ use crate::{
 		VertexInfo,
 	},
 	util::TakeExt,
-	Mesh,
+	Buffer,
 	RenderPass,
 };
 
@@ -54,8 +62,8 @@ pub struct Pipeline<
 	Constants: PushConstantInfo,
 > {
 	pass: &'a RenderPass<'a>,
+	shader: &'a Shader<'a, Vertex, Uniforms, Index, Constants>,
 	pipe: MaybeUninit<<Backend as gfx_hal::Backend>::GraphicsPipeline>,
-	phantom: PhantomData<(Vertex, Uniforms, Index, Constants)>,
 }
 
 pub struct BoundPipe<
@@ -66,8 +74,8 @@ pub struct BoundPipe<
 	Index: IndexType,
 	Constants: PushConstantInfo,
 > {
+	pipeline: &'a Pipeline<'a, Vertex, Uniforms, Index, Constants>,
 	encoder: &'a mut RenderSubpassCommon<Backend, C>,
-	phantom: PhantomData<(Vertex, Uniforms, Index, Constants)>,
 }
 
 pub enum SpecializationValue {
@@ -157,8 +165,8 @@ impl<
 
 		Pipeline {
 			pass,
+			shader,
 			pipe: MaybeUninit::new(pipe),
-			phantom: PhantomData,
 		}
 	}
 
@@ -174,8 +182,8 @@ impl<
 			encoder.bind_graphics_pipeline(self.pipe.get_ref());
 		}
 		let mut bp = BoundPipe {
+			pipeline: self,
 			encoder,
-			phantom: PhantomData,
 		};
 		draws(&mut bp);
 	}
@@ -190,13 +198,59 @@ impl<
 		Constants: PushConstantInfo,
 	> BoundPipe<'a, C, Vertex, Uniforms, Index, Constants>
 {
-	pub fn draw_mesh(
-		&mut self,
-		mesh: &Mesh<Vertex, Uniforms, Index, Constants>,
-		descriptor_idx: usize,
-		constants: Constants,
-	) {
-		mesh.draw(self.encoder, descriptor_idx, constants);
+	pub fn bind_vertex_buffer(&mut self, buffer: &Buffer) {
+		unsafe {
+			self.encoder
+				.bind_vertex_buffers(0, once((buffer.buffer(), 0)));
+		}
+	}
+
+	pub fn bind_index_buffer(&mut self, buffer: &Buffer) {
+		unsafe {
+			self.encoder.bind_index_buffer(IndexBufferView {
+				buffer: buffer.buffer(),
+				offset: 0,
+				index_type: Index::HAL,
+			});
+		}
+	}
+
+	pub fn bind_descriptors(&mut self, descriptors: &<Backend as gfx_hal::Backend>::DescriptorSet) {
+		unsafe {
+			self.encoder.bind_graphics_descriptor_sets(
+				self.pipeline.shader.pipe_layout(),
+				0,
+				once(descriptors),
+				&[],
+			);
+		}
+	}
+
+	pub fn draw_indexed(&mut self, indices: Range<IndexCount>, instances: Range<InstanceCount>) {
+		unsafe { self.encoder.draw_indexed(indices, 0, instances) }
+	}
+}
+
+impl<
+		'a,
+		C: BorrowMut<<Backend as gfx_hal::Backend>::CommandBuffer>,
+		Vertex: VertexInfo,
+		Uniforms: UniformInfo,
+		Index: IndexType,
+		Constants: PushConstantInfo, //Find a way to implement !()
+	> BoundPipe<'a, C, Vertex, Uniforms, Index, Constants>
+{
+	pub fn bind_push_constants(&mut self, constants: Constants) {
+		unsafe {
+			let pc_ptr = &constants as *const Constants as *const u32;
+			let slice = slice::from_raw_parts(pc_ptr, size_of::<Constants>() / size_of::<u32>());
+			self.encoder.push_graphics_constants(
+				self.pipeline.shader.pipe_layout(),
+				self.pipeline.shader.push_constant_stages,
+				0,
+				slice,
+			);
+		}
 	}
 }
 

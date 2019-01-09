@@ -8,7 +8,6 @@ use gfx_hal::{
 	format::Format,
 	pso::{
 		AttributeDesc,
-		Descriptor,
 		DescriptorArrayIndex,
 		DescriptorBinding,
 		DescriptorSetLayoutBinding,
@@ -27,10 +26,8 @@ use gfx_hal::{
 use crate::{
 	gfx_back::Backend,
 	util::TakeExt,
-	BufferPool,
 	DescriptorPool,
 	HALData,
-	Mesh,
 };
 
 pub struct Shader<
@@ -197,16 +194,6 @@ impl<
 			push_constant_stages,
 			phantom: PhantomData,
 		}
-	}
-
-	pub fn create_mesh<'b>(
-		&'a self,
-		pool: &'a BufferPool,
-		vertices: Vec<Vertex>,
-		indices: Vec<Index>,
-		descriptors: &'b [Vec<Descriptor<Backend>>],
-	) -> Mesh<'a, Vertex, Uniforms, Index, Constants> {
-		Mesh::create(self, pool, vertices, indices, descriptors)
 	}
 
 	pub(crate) fn layout_bindings(&self) -> &[DescriptorSetLayoutBinding] { &self.layout_bindings }

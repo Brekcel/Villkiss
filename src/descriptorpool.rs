@@ -115,7 +115,9 @@ impl<
 		let device = &self.shader.data.device;
 		let pool = MaybeUninit::take(&mut self.descriptor_pool);
 		//        pool.free_sets(self.descriptor_sets.drain(..));
-		unsafe { device.destroy_descriptor_pool(pool); }
+		unsafe {
+			device.destroy_descriptor_pool(pool);
+		}
 		println!("Dropped Descriptors");
 	}
 }

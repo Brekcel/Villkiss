@@ -31,7 +31,7 @@ use crate::{
 pub struct CommandPool<'a> {
 	pub(crate) data: &'a HALData,
 	pub(crate) pool: MaybeUninit<RefCell<HAL_CommandPool<Backend, Graphics>>>,
-    buffers: RefCell<Vec<CommandBuffer<Backend, Graphics, OneShot, Primary>>>
+	buffers: RefCell<Vec<CommandBuffer<Backend, Graphics, OneShot, Primary>>>,
 }
 
 impl<'a> CommandPool<'a> {
@@ -50,13 +50,13 @@ impl<'a> CommandPool<'a> {
 		CommandPool {
 			data,
 			pool: MaybeUninit::new(RefCell::new(pool)),
-            buffers: RefCell::new(Vec::with_capacity(4))
+			buffers: RefCell::new(Vec::with_capacity(4)),
 		}
 	}
 
 	pub fn reset(&self) {
 		unsafe {
-            let mut pool = self.pool.get_ref().borrow_mut();
+			let mut pool = self.pool.get_ref().borrow_mut();
 			pool.free(self.buffers.borrow_mut().drain(..));
 			pool.reset();
 		}
@@ -89,7 +89,7 @@ impl<'a> CommandPool<'a> {
 				signal_semaphores: signal_sems,
 			};
 			self.data.submit(submission, fence);
-            self.buffers.borrow_mut().push(buffer);
+			self.buffers.borrow_mut().push(buffer);
 		}
 	}
 }
