@@ -138,10 +138,11 @@ impl<'a> Texture<'a> {
 			(usage, aspects, sampler)
 		};
 		let (image, block) = Texture::image_block(pool, &info, usage);
-		let fence = data.create_fence();
-		fence.reset();
+		let staged = unsafe { pool.staging_buf.get_ref() };
+		let fence = &staged.fence;
 		info.pixels.map_or_else(
 			|| {
+				fence.wait_n_reset();
 				pool.command_pool
 					.single_submit(&[], &[], &fence, |cmd_buf| {
 						Self::transition_image_layout(
@@ -153,8 +154,8 @@ impl<'a> Texture<'a> {
 					})
 			},
 			|pixels| {
-				let staged = unsafe { pool.staging_buf.get_ref() };
 				staged.upload(pixels, device);
+				fence.reset();
 				pool.command_pool
 					.single_submit(&[], &[], &fence, |cmd_buf| {
 						let range = match info.mipmaps {
@@ -198,11 +199,12 @@ impl<'a> Texture<'a> {
 					})
 			},
 		);
-		fence.wait_n_reset();
+		fence.wait();
 		match info.mipmaps {
 			MipMaps::Generate => Self::gen_mipmaps(&image, &pool, info, &fence),
 			_ => (),
 		}
+		fence.wait();
 		let kind = match info.kind {
 			Kind::D1(_, _) => ViewKind::D1,
 			Kind::D2(_, _, _, _) => ViewKind::D2,
@@ -263,6 +265,7 @@ impl<'a> Texture<'a> {
 		info: TextureInfo,
 		fence: &Fence,
 	) {
+		fence.reset();
 		pool.command_pool.single_submit(&[], &[], fence, |buffer| {
 			let (mut width, mut height) = {
 				let extent = info.kind.extent();

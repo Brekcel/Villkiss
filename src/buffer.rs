@@ -9,6 +9,7 @@ use gfx_hal::{
 	Device,
 };
 use std::{
+	marker::PhantomData,
 	mem::{
 		size_of,
 		MaybeUninit,
@@ -29,122 +30,52 @@ use crate::{
 	BufferPool,
 };
 
-pub struct Buffer<'a> {
-	parent: &'a BufferPool<'a>,
-	block: MaybeUninit<<SmartAllocator<Backend> as MemoryAllocator<Backend>>::Block>,
-	buffer: MaybeUninit<<Backend as gfx_hal::Backend>::Buffer>,
-	usage: Usage,
-	props: Properties,
+use self::inner::InnerBuffer;
+
+pub(crate) mod inner {
+	use crate::{
+		gfx_back::Backend,
+		BufferPool,
+	};
+	use gfx_hal::buffer;
+	use gfx_memory::{
+		MemoryAllocator,
+		SmartAllocator,
+	};
+	pub trait InnerBuffer {
+		fn pool(&self) -> &BufferPool;
+		fn rusage(&self) -> buffer::Usage;
+		fn rlen(&self) -> buffer::Offset;
+		fn buffer(&self) -> &<Backend as gfx_hal::Backend>::Buffer;
+		fn block(&self) -> &<SmartAllocator<Backend> as MemoryAllocator<Backend>>::Block;
+
+		fn own_buffer(&mut self) -> <Backend as gfx_hal::Backend>::Buffer;
+		fn own_block(&mut self) -> <SmartAllocator<Backend> as MemoryAllocator<Backend>>::Block;
+	}
 }
 
-impl<'a> Buffer<'a> {
-	pub fn create(
-		pool: &'a BufferPool<'a>,
-		size: u64,
-		usage: Usage,
-		uses_staging: bool,
-	) -> Buffer<'a> {
-		let device = &pool.data.device;
-		let size = size as buffer::Offset;
-		let (usage, props) = if uses_staging {
-			(usage | Usage::TRANSFER_DST, Properties::DEVICE_LOCAL)
-		} else {
-			(usage, Properties::CPU_VISIBLE | Properties::COHERENT)
-		};
-		unsafe {
-			let mut buffer = device.create_buffer(size, usage).unwrap();
-			let reqs = device.get_buffer_requirements(&buffer);
-			let block = pool
-				.allocator
-				.get_ref()
-				.borrow_mut()
-				.alloc(device, (Type::General, props), reqs)
-				.unwrap();
-			device
-				.bind_buffer_memory(block.memory(), block.range().start, &mut buffer)
-				.unwrap();
+pub trait Buffer<'a, T: Sized + Copy + Clone>: InnerBuffer + Sized {
+	fn create(pool: &'a BufferPool, usage: Usage, size: buffer::Offset) -> Self;
 
-			Buffer {
-				parent: pool,
-				block: MaybeUninit::new(block),
-				buffer: MaybeUninit::new(buffer),
-				usage,
-				props,
-			}
-		}
+	fn create_slice(pool: &'a BufferPool, usage: Usage, slice: &[T]) -> Self {
+		let buf = Self::create(pool, usage, slice.len() as buffer::Offset);
+		buf.upload(0, slice);
+		buf
 	}
 
-	pub fn upload<T>(&mut self, data: &[T], offset: u64) {
-		let device = &self.parent.data.device;
-		if self.props.contains(Properties::CPU_VISIBLE) {
-			let block = unsafe { self.block.get_ref() };
-			let offset = offset + block.range().start;
-			let memory = block.memory();
-			Self::do_upload(data, offset, device, memory)
-		} else {
-			self.staged_upload(data, offset)
-		}
-	}
+	fn upload(&self, offset: buffer::Offset, data: &[T]);
 
-	pub(crate) fn do_upload<T>(
-		data: &[T],
-		offset: u64,
-		device: &<Backend as gfx_hal::Backend>::Device,
-		memory: &<Backend as gfx_hal::Backend>::Memory,
-	) {
-		let t_size = size_of::<T>() as buffer::Offset;
-		let len = t_size * data.len() as buffer::Offset;
-		let offset = offset as buffer::Offset;
+	fn usage(&self) -> Usage { self.rusage() }
 
-		let range = offset..offset + len;
+	fn len(&self) -> buffer::Offset { self.rlen() }
 
-		unsafe {
-			let map = device.map_memory(memory, range.clone()).unwrap();
+	fn descriptor(&self) -> Descriptor<Backend> { Descriptor::Buffer(self.buffer(), None..None) }
 
-			std::ptr::copy_nonoverlapping(data.as_ptr(), map as *mut T, data.len());
-
-			device.unmap_memory(memory);
-		}
-	}
-
-	fn staged_upload<T>(&mut self, data: &[T], offset: u64) {
-		let device = &self.parent.data.device;
-		let pool = &self.parent.command_pool;
-		let staged = unsafe { self.parent.staging_buf.get_ref() };
-		let fence = &staged.fence;
-		let range = BufferCopy {
-			src: 0,
-			dst: offset as buffer::Offset,
-			size: (data.len() * std::mem::size_of::<T>()) as buffer::Offset,
-		};
-		fence.wait_n_reset();
-		staged.buf_uses.update(|mut i| {
-			i += 1;
-			if i >= 16 {
-				pool.reset();
-				i = 0;
-			}
-			i
-		});
-		staged.upload(data, device);
-		pool.single_submit(&[], &[], fence, |buffer| unsafe {
-			buffer.copy_buffer(&staged.buffer, self.buffer(), &[range]);
-		});
-	}
-
-	pub(crate) fn buffer(&self) -> &<Backend as gfx_hal::Backend>::Buffer {
-		unsafe { self.buffer.get_ref() }
-	}
-
-	pub fn descriptor(&self) -> Descriptor<Backend> {
-		Descriptor::Buffer(self.buffer(), None..None)
-	}
-
-	pub fn descriptor_to_end(&self, start: usize) -> Descriptor<Backend> {
+	fn descriptor_to_end(&self, start: usize) -> Descriptor<Backend> {
 		Descriptor::Buffer(self.buffer(), Some(start as u64)..None)
 	}
 
-	pub fn descriptor_range(&self, range: Range<usize>) -> Descriptor<Backend> {
+	fn descriptor_range(&self, range: Range<usize>) -> Descriptor<Backend> {
 		Descriptor::Buffer(
 			self.buffer(),
 			Some(range.start as u64)..Some(range.end as u64),
@@ -152,30 +83,189 @@ impl<'a> Buffer<'a> {
 	}
 }
 
-impl<'a> Drop for Buffer<'a> {
+struct BaseBuffer<'a, T: Copy + Clone> {
+	pool: &'a BufferPool<'a>,
+	block: MaybeUninit<<SmartAllocator<Backend> as MemoryAllocator<Backend>>::Block>,
+	buffer: MaybeUninit<<Backend as gfx_hal::Backend>::Buffer>,
+	usage: Usage,
+	len: buffer::Offset,
+	phantom: PhantomData<T>,
+}
+
+impl<T: Copy + Clone> Drop for BaseBuffer<'_, T> {
 	fn drop(&mut self) {
-		let device = &self.parent.data.device;
+		let pool = &self.pool;
+		let device = &pool.data.device;
 		unsafe {
 			device.destroy_buffer(MaybeUninit::take(&mut self.buffer));
-			self.parent
-				.allocator
+
+			pool.allocator
 				.get_ref()
 				.borrow_mut()
 				.free(device, MaybeUninit::take(&mut self.block));
 		}
-		println!("Dropped Buffer")
+		println!("Dropped buffer");
 	}
 }
 
-//impl<'a> BufferView<'a> {
-//    pub fn buffer_view(&self) -> &<Backend as gfx_hal::Backend>::BufferView {
-//        unsafe { self.view.get_ref() }
-//    }
-//}
-//
-//impl<'a> Drop for BufferView<'a> {
-//    fn drop(&mut self) {
-//        let device = &self.data.device;
-//        device.destroy_buffer_view(MaybeUninit::take(&mut self.view));
-//    }
-//}
+impl<T: Copy + Clone> InnerBuffer for BaseBuffer<'_, T> {
+	fn pool(&self) -> &BufferPool { &self.pool }
+
+	fn buffer(&self) -> &<Backend as gfx_hal::Backend>::Buffer { unsafe { &self.buffer.get_ref() } }
+
+	fn block(&self) -> &<SmartAllocator<Backend> as MemoryAllocator<Backend>>::Block {
+		unsafe { &self.block.get_ref() }
+	}
+
+	fn own_buffer(&mut self) -> <Backend as gfx_hal::Backend>::Buffer {
+		MaybeUninit::take(&mut self.buffer)
+	}
+
+	fn own_block(&mut self) -> <SmartAllocator<Backend> as MemoryAllocator<Backend>>::Block {
+		MaybeUninit::take(&mut self.block)
+	}
+
+	fn rusage(&self) -> Usage { self.usage }
+
+	fn rlen(&self) -> buffer::Offset { self.len }
+}
+
+pub struct CPUBuffer<'a, T: Copy + Clone>(BaseBuffer<'a, T>);
+pub struct GPUBuffer<'a, T: Copy + Clone>(BaseBuffer<'a, T>);
+
+impl<'a, T: Copy + Clone> Buffer<'a, T> for CPUBuffer<'a, T> {
+	fn create(pool: &'a BufferPool, usage: Usage, size: buffer::Offset) -> Self {
+		unsafe {
+			let device = &pool.data.device;
+
+			let mut allocator = pool.allocator.get_ref().borrow_mut();
+			let size_in_bytes = (size_of::<T>() as buffer::Offset) * size;
+			let mut buffer = device.create_buffer(size_in_bytes, usage).unwrap();
+			let reqs = device.get_buffer_requirements(&buffer);
+			let block = allocator
+				.alloc(
+					device,
+					(
+						Type::General,
+						Properties::COHERENT | Properties::CPU_VISIBLE,
+					),
+					reqs,
+				)
+				.unwrap();
+			device
+				.bind_buffer_memory(block.memory(), block.range().start, &mut buffer)
+				.unwrap();
+			CPUBuffer(BaseBuffer {
+				pool,
+				block: MaybeUninit::new(block),
+				buffer: MaybeUninit::new(buffer),
+				usage,
+				len: size,
+				phantom: PhantomData,
+			})
+		}
+	}
+
+	fn upload(&self, mut offset: buffer::Offset, data: &[T]) {
+		assert!(
+			Buffer::len(self) >= data.len() as buffer::Offset,
+			"Attempted to upload more data than the buffer could handle!"
+		);
+		let device = &self.pool().data.device;
+		let size_in_bytes = (size_of::<T>() * data.len()) as buffer::Offset;
+		offset += self.block().range().start;
+		let range = offset..offset + size_in_bytes;
+		unsafe {
+			let map = device.map_memory(self.block().memory(), range).unwrap();
+
+			std::ptr::copy_nonoverlapping(data.as_ptr(), map as *mut T, data.len());
+
+			device.unmap_memory(self.block().memory());
+		}
+	}
+}
+
+impl<'a, T: Copy + Clone> Buffer<'a, T> for GPUBuffer<'a, T> {
+	fn create(pool: &'a BufferPool, usage: Usage, size: buffer::Offset) -> Self {
+		unsafe {
+			let device = &pool.data.device;
+
+			let mut allocator = pool.allocator.get_ref().borrow_mut();
+			let size_in_bytes = (size_of::<T>() as buffer::Offset) * size;
+			let mut buffer = device
+				.create_buffer(size_in_bytes, usage | Usage::TRANSFER_DST)
+				.unwrap();
+			let reqs = device.get_buffer_requirements(&buffer);
+			let block = allocator
+				.alloc(device, (Type::General, Properties::DEVICE_LOCAL), reqs)
+				.unwrap();
+			device
+				.bind_buffer_memory(block.memory(), block.range().start, &mut buffer)
+				.unwrap();
+			GPUBuffer(BaseBuffer {
+				pool,
+				block: MaybeUninit::new(block),
+				buffer: MaybeUninit::new(buffer),
+				usage,
+				len: size,
+				phantom: PhantomData,
+			})
+		}
+	}
+
+	fn upload(&self, offset: u64, data: &[T]) {
+		let device = &self.pool().data.device;
+		let command_pool = &self.pool().command_pool;
+		let staged = unsafe { &self.pool().staging_buf.get_ref() };
+		let fence = &staged.fence;
+		let range = BufferCopy {
+			src: 0,
+			dst: offset as buffer::Offset,
+			size: (data.len() * std::mem::size_of::<T>()) as buffer::Offset,
+		};
+		staged.upload(data, device);
+		fence.reset();
+		staged.buf_uses.update(|mut i| {
+			i += 1;
+			if i >= 16 {
+				command_pool.reset();
+				i = 0;
+			}
+			i
+		});
+		command_pool.single_submit(&[], &[], fence, |buffer| unsafe {
+			buffer.copy_buffer(&staged.buffer, self.buffer(), &[range]);
+		});
+	}
+}
+
+macro_rules! impl_inner {
+	($name: ident) => {
+		impl<T: Copy + Clone> InnerBuffer for $name<'_, T> {
+			fn pool(&self) -> &BufferPool { self.0.pool() }
+
+			fn rusage(&self) -> Usage { self.0.rusage() }
+
+			fn rlen(&self) -> buffer::Offset { self.0.rlen() }
+
+			fn buffer(&self) -> &<Backend as gfx_hal::Backend>::Buffer { self.0.buffer() }
+
+			fn block(&self) -> &<SmartAllocator<Backend> as MemoryAllocator<Backend>>::Block {
+				self.0.block()
+			}
+
+			fn own_buffer(&mut self) -> <Backend as gfx_hal::Backend>::Buffer {
+				self.0.own_buffer()
+			}
+
+			fn own_block(
+				&mut self,
+			) -> <SmartAllocator<Backend> as MemoryAllocator<Backend>>::Block {
+				self.0.own_block()
+			}
+		}
+	};
+}
+
+impl_inner!(GPUBuffer);
+impl_inner!(CPUBuffer);

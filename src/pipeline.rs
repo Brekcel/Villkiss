@@ -198,14 +198,14 @@ impl<
 		Constants: PushConstantInfo,
 	> BoundPipe<'a, C, Vertex, Uniforms, Index, Constants>
 {
-	pub fn bind_vertex_buffer(&mut self, buffer: &Buffer) {
+	pub fn bind_vertex_buffer<'b>(&mut self, buffer: &impl Buffer<'b, Vertex>) {
 		unsafe {
 			self.encoder
 				.bind_vertex_buffers(0, once((buffer.buffer(), 0)));
 		}
 	}
 
-	pub fn bind_index_buffer(&mut self, buffer: &Buffer) {
+	pub fn bind_index_buffer<'b>(&mut self, buffer: &impl Buffer<'b, Index>) {
 		unsafe {
 			self.encoder.bind_index_buffer(IndexBufferView {
 				buffer: buffer.buffer(),

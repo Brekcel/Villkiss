@@ -71,23 +71,24 @@ impl<'a> BufferPool<'a> {
 		}
 	}
 
-	pub fn create_buffer(&self, size: u64, usage: Usage, uses_staging: bool) -> Buffer {
-		Buffer::create(self, size, usage, uses_staging)
-	}
-
-	pub fn create_buffer_data<'b, T>(
-		&self,
-		data: &'b [T],
-		usage: Usage,
-		uses_staging: bool,
-	) -> Buffer {
-		let mut buf = self.create_buffer((size_of::<T>() * data.len()) as u64, usage, uses_staging);
-		buf.upload(data, 0);
-		buf
-	}
-
 	pub fn create_texture<'b>(&self, info: TextureInfo<'b>) -> Texture {
 		Texture::create(self, info)
+	}
+
+	pub fn create_buffer<'b, B, T>(&'b self, usage: Usage, size: buffer::Offset) -> B
+	where
+		T: Copy + Clone,
+		B: Buffer<'b, T>,
+	{
+		B::create(self, usage, size)
+	}
+
+	pub fn create_buffer_slice<'b, 'c, B, T>(&'b self, usage: Usage, slice: &'c [T]) -> B
+	where
+		T: Copy + Clone,
+		B: Buffer<'b, T>,
+	{
+		B::create_slice(self, usage, slice)
 	}
 }
 
@@ -109,7 +110,7 @@ impl<'a> Drop for BufferPool<'a> {
 
 // 16 Megabytes
 //2usize.pow(26)
-const STAGING_BUF_SIZE: usize = 67108864;
+const STAGING_BUF_SIZE: buffer::Offset = 67108864;
 
 impl<'a> StagingBuffer<'a> {
 	fn create<'b>(
@@ -122,7 +123,7 @@ impl<'a> StagingBuffer<'a> {
 			let device = &data.device;
 
 			let mut buffer = device
-				.create_buffer(STAGING_BUF_SIZE as buffer::Offset, Usage::TRANSFER_SRC)
+				.create_buffer(STAGING_BUF_SIZE, Usage::TRANSFER_SRC)
 				.unwrap();
 			let reqs = device.get_buffer_requirements(&buffer);
 			let block = allocator
@@ -130,7 +131,7 @@ impl<'a> StagingBuffer<'a> {
 					device,
 					(
 						Type::General,
-						Properties::CPU_VISIBLE | Properties::COHERENT,
+						Properties::COHERENT | Properties::CPU_VISIBLE,
 					),
 					reqs,
 				)
@@ -138,6 +139,7 @@ impl<'a> StagingBuffer<'a> {
 			device
 				.bind_buffer_memory(block.memory(), block.range().start, &mut buffer)
 				.unwrap();
+
 			let fence = data.create_fence();
 			StagingBuffer {
 				block,
@@ -149,7 +151,21 @@ impl<'a> StagingBuffer<'a> {
 	}
 
 	pub(crate) fn upload<T>(&self, data: &[T], device: &<Backend as gfx_hal::Backend>::Device) {
-		Buffer::do_upload(data, self.block.range().start, device, self.block.memory())
+		let size_in_bytes = (size_of::<T>() * data.len()) as buffer::Offset;
+		assert!(
+			STAGING_BUF_SIZE >= size_in_bytes,
+			"Attempted to upload more data than the buffer could handle!"
+		);
+		let offset = self.block.range().start;
+		let range = offset..offset + size_in_bytes;
+		self.fence.wait();
+		unsafe {
+			let map = device.map_memory(self.block.memory(), range).unwrap();
+
+			std::ptr::copy_nonoverlapping(data.as_ptr(), map as *mut T, data.len());
+
+			device.unmap_memory(self.block.memory());
+		}
 	}
 
 	fn manual_drop(self, data: &HALData, alloc: &mut SmartAllocator<Backend>) {

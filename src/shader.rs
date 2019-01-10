@@ -60,7 +60,7 @@ pub struct ShaderSet<T> {
 pub type ShaderModData<'a> = ShaderSet<&'a [u8]>;
 type ShaderMods = ShaderSet<<Backend as gfx_hal::Backend>::ShaderModule>;
 
-pub trait IndexType {
+pub trait IndexType: Copy + Clone {
 	const HAL: HALIndexType;
 }
 
@@ -72,7 +72,7 @@ impl IndexType for u32 {
 	const HAL: HALIndexType = HALIndexType::U32;
 }
 
-pub trait VertexInfo {
+pub trait VertexInfo: Copy + Clone {
 	const ATTRIBUTES: &'static [Format];
 	const STRIDE: u32;
 }
