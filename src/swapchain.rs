@@ -31,6 +31,7 @@ use gfx_hal::image::ViewKind;
 use crate::ImageView;
 
 use crate::{
+	buffer::StagingBuffer,
 	gfx_back::Backend,
 	texture::{
 		MipMaps,
@@ -38,7 +39,6 @@ use crate::{
 		TextureInfo,
 	},
 	util::TakeExt,
-	BufferPool,
 	HALData,
 	RenderPass,
 	Semaphore,
@@ -57,7 +57,7 @@ pub struct Swapchain<'a> {
 }
 
 impl<'a> Swapchain<'a> {
-	pub(crate) fn create<'b>(data: &'a HALData, pool: &'a BufferPool<'a>) -> Swapchain<'a> {
+	pub(crate) fn create<'b>(data: &'a HALData, staging_buf: &'b StagingBuffer) -> Swapchain<'a> {
 		println!("Creating Swapchain");
 		let device = &data.device;
 		let (capabilities, formats, _, composite_alpha) = data
@@ -91,13 +91,16 @@ impl<'a> Swapchain<'a> {
 				.create_swapchain(&mut data.surface.borrow_mut(), swap_config, None)
 				.unwrap()
 		};
-		let depth_tex = pool.create_texture(TextureInfo {
-			kind: Kind::D2(dims.width, dims.height, 1, 1),
-			format: Format::D32FloatS8Uint,
-			mipmaps: MipMaps::None,
-			pixels: None,
-			wrap_mode: (WrapMode::Border, WrapMode::Border, WrapMode::Border),
-		});
+		let depth_tex = data.create_texture(
+			TextureInfo {
+				kind: Kind::D2(dims.width, dims.height, 1, 1),
+				format: Format::D32FloatS8Uint,
+				mipmaps: MipMaps::None,
+				pixels: None,
+				wrap_mode: (WrapMode::Border, WrapMode::Border, WrapMode::Border),
+			},
+			staging_buf,
+		);
 		//		#[cfg(not(feature = "gl"))]
 		let image_views = match backbuffer {
 			Backbuffer::Images(ref i) => i

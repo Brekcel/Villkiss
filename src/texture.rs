@@ -52,16 +52,18 @@ use gfx_memory::{
 };
 
 use crate::{
+	buffer::StagingBuffer,
 	gfx_back::Backend,
 	util::TakeExt,
-	BufferPool,
+	CommandPool,
 	Fence,
+	HALData,
 	ImageView,
 	Sampler,
 };
 
 pub struct Texture<'a> {
-	pub(crate) pool: &'a BufferPool<'a>,
+	pub(crate) data: &'a HALData,
 	pub(crate) kind: ViewKind,
 	pub(crate) format: Format,
 	pub(crate) image: MaybeUninit<<Backend as gfx_hal::Backend>::Image>,
@@ -102,12 +104,15 @@ pub struct TextureInfo<'a> {
 }
 
 impl<'a> Texture<'a> {
-	pub(crate) fn create<'b>(pool: &'a BufferPool, info: TextureInfo<'b>) -> Texture<'a> {
+	pub(crate) fn create<'b>(
+		data: &'a HALData,
+		info: TextureInfo<'b>,
+		staging_buf: &'b StagingBuffer,
+	) -> Texture<'a> {
 		println!("Creating Texture");
-		let data = &pool.data;
 		let device = &data.device;
 		let extent = info.kind.extent();
-
+		let command_pool = &staging_buf.command_pool;
 		let mip_levels = info.mipmaps.levels(info);
 		let (usage, aspects, sampler) = if info.pixels.is_some() {
 			let mut usage = Usage::TRANSFER_DST | Usage::SAMPLED;
@@ -137,74 +142,68 @@ impl<'a> Texture<'a> {
 			let sampler = None;
 			(usage, aspects, sampler)
 		};
-		let (image, block) = Texture::image_block(pool, &info, usage);
-		let staged = unsafe { pool.staging_buf.get_ref() };
-		let fence = &staged.fence;
+		let (image, block) = Texture::image_block(data, &info, usage);
+		let fence = &staging_buf.fence;
 		info.pixels.map_or_else(
 			|| {
-				fence.wait_n_reset();
-				pool.command_pool
-					.single_submit(&[], &[], &fence, |cmd_buf| {
+				command_pool.single_submit(&[], &[], &fence, |cmd_buf| {
+					Self::transition_image_layout(
+						cmd_buf,
+						&image,
+						0,
+						Layout::Undefined..Layout::DepthStencilAttachmentOptimal,
+					);
+				})
+			},
+			|pixels| {
+				staging_buf.upload(pixels);
+				command_pool.single_submit(&[], &[], &fence, |cmd_buf| {
+					let range = match info.mipmaps {
+						MipMaps::PreExisting(i) => 0..i,
+						_ => 0..1,
+					};
+					for level in range {
+						let copy = BufferImageCopy {
+							buffer_offset: 0,
+							buffer_width: 0,
+							buffer_height: 0,
+							image_layers: SubresourceLayers {
+								aspects: Aspects::COLOR,
+								level,
+								layers: 0..1,
+							},
+							image_offset: Offset::ZERO,
+							image_extent: extent,
+						};
 						Self::transition_image_layout(
 							cmd_buf,
 							&image,
-							0,
-							Layout::Undefined..Layout::DepthStencilAttachmentOptimal,
+							level,
+							Layout::Undefined..Layout::TransferDstOptimal,
 						);
-					})
-			},
-			|pixels| {
-				staged.upload(pixels, device);
-				fence.reset();
-				pool.command_pool
-					.single_submit(&[], &[], &fence, |cmd_buf| {
-						let range = match info.mipmaps {
-							MipMaps::PreExisting(i) => 0..i,
-							_ => 0..1,
-						};
-						for level in range {
-							let copy = BufferImageCopy {
-								buffer_offset: 0,
-								buffer_width: 0,
-								buffer_height: 0,
-								image_layers: SubresourceLayers {
-									aspects: Aspects::COLOR,
-									level,
-									layers: 0..1,
-								},
-								image_offset: Offset::ZERO,
-								image_extent: extent,
-							};
-							Self::transition_image_layout(
-								cmd_buf,
+						unsafe {
+							cmd_buf.copy_buffer_to_image(
+								&staging_buf.base.buffer.get_ref(),
 								&image,
-								level,
-								Layout::Undefined..Layout::TransferDstOptimal,
-							);
-							unsafe {
-								cmd_buf.copy_buffer_to_image(
-									&staged.buffer,
-									&image,
-									Layout::TransferDstOptimal,
-									once(copy),
-								);
-							}
-							Self::transition_image_layout(
-								cmd_buf,
-								&image,
-								level,
-								Layout::TransferDstOptimal..Layout::ShaderReadOnlyOptimal,
+								Layout::TransferDstOptimal,
+								once(copy),
 							);
 						}
-					})
+						Self::transition_image_layout(
+							cmd_buf,
+							&image,
+							level,
+							Layout::TransferDstOptimal..Layout::ShaderReadOnlyOptimal,
+						);
+					}
+				})
 			},
 		);
-		fence.wait();
 		match info.mipmaps {
-			MipMaps::Generate => Self::gen_mipmaps(&image, &pool, info, &fence),
+			MipMaps::Generate => Self::gen_mipmaps(&image, command_pool, info, &fence),
 			_ => (),
 		}
-		fence.wait();
+
 		let kind = match info.kind {
 			Kind::D1(_, _) => ViewKind::D1,
 			Kind::D2(_, _, _, _) => ViewKind::D2,
@@ -213,8 +212,9 @@ impl<'a> Texture<'a> {
 
 		let view = ImageView::create(data, &image, info.format, kind, aspects, mip_levels);
 
+		fence.wait();
 		Texture {
-			pool,
+			data,
 			kind,
 			format: info.format,
 			image: MaybeUninit::new(image),
@@ -225,14 +225,14 @@ impl<'a> Texture<'a> {
 	}
 
 	fn image_block<'b>(
-		pool: &'a BufferPool,
+		data: &'a HALData,
 		info: &'b TextureInfo<'b>,
 		usage: Usage,
 	) -> (
 		<Backend as gfx_hal::Backend>::Image,
 		<SmartAllocator<Backend> as MemoryAllocator<Backend>>::Block,
 	) {
-		let device = &pool.data.device;
+		let device = &data.device;
 		let mips = info.mipmaps.levels(*info);
 		unsafe {
 			let mut image = device
@@ -246,7 +246,7 @@ impl<'a> Texture<'a> {
 				)
 				.unwrap();
 			let reqs = device.get_image_requirements(&image);
-			let block = pool
+			let block = data
 				.allocator
 				.get_ref()
 				.borrow_mut()
@@ -261,12 +261,12 @@ impl<'a> Texture<'a> {
 
 	fn gen_mipmaps(
 		image: &<Backend as gfx_hal::Backend>::Image,
-		pool: &BufferPool,
+		command_pool: &CommandPool,
 		info: TextureInfo,
 		fence: &Fence,
 	) {
-		fence.reset();
-		pool.command_pool.single_submit(&[], &[], fence, |buffer| {
+		fence.wait_n_reset();
+		command_pool.single_submit(&[], &[], fence, |buffer| {
 			let (mut width, mut height) = {
 				let extent = info.kind.extent();
 				(extent.width, extent.height)
@@ -363,7 +363,6 @@ impl<'a> Texture<'a> {
 				}
 			}
 		});
-		fence.wait_n_reset();
 	}
 
 	fn transition_image_layout(
@@ -439,9 +438,9 @@ impl<'a> Texture<'a> {
 impl<'a> Drop for Texture<'a> {
 	fn drop(&mut self) {
 		let img = MaybeUninit::take(&mut self.image);
-		let device = &self.pool.data.device;
+		let device = &self.data.device;
 		unsafe {
-			self.pool
+			self.data
 				.allocator
 				.get_ref()
 				.borrow_mut()

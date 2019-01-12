@@ -27,7 +27,9 @@ use gfx_memory::{
 use crate::{
 	gfx_back::Backend,
 	util::TakeExt,
-	BufferPool,
+	CommandPool,
+	Fence,
+	HALData,
 };
 
 use self::inner::InnerBuffer;
@@ -35,7 +37,7 @@ use self::inner::InnerBuffer;
 pub(crate) mod inner {
 	use crate::{
 		gfx_back::Backend,
-		BufferPool,
+		HALData,
 	};
 	use gfx_hal::buffer;
 	use gfx_memory::{
@@ -43,7 +45,7 @@ pub(crate) mod inner {
 		SmartAllocator,
 	};
 	pub trait InnerBuffer {
-		fn pool(&self) -> &BufferPool;
+		fn data(&self) -> &HALData;
 		fn rusage(&self) -> buffer::Usage;
 		fn rlen(&self) -> buffer::Offset;
 		fn buffer(&self) -> &<Backend as gfx_hal::Backend>::Buffer;
@@ -55,19 +57,7 @@ pub(crate) mod inner {
 }
 
 pub trait Buffer<'a, T: Sized + Copy + Clone>: InnerBuffer + Sized {
-	fn create(pool: &'a BufferPool, usage: Usage, size: buffer::Offset) -> Self;
-
-	fn create_slice(pool: &'a BufferPool, usage: Usage, slice: &[T]) -> Self {
-		let buf = Self::create(pool, usage, slice.len() as buffer::Offset);
-		buf.upload(0, slice);
-		buf
-	}
-
-	fn upload(&self, offset: buffer::Offset, data: &[T]);
-
-	fn usage(&self) -> Usage { self.rusage() }
-
-	fn len(&self) -> buffer::Offset { self.rlen() }
+	fn create(data: &'a HALData, usage: Usage, size: buffer::Offset) -> Self;
 
 	fn descriptor(&self) -> Descriptor<Backend> { Descriptor::Buffer(self.buffer(), None..None) }
 
@@ -83,10 +73,10 @@ pub trait Buffer<'a, T: Sized + Copy + Clone>: InnerBuffer + Sized {
 	}
 }
 
-struct BaseBuffer<'a, T: Copy + Clone> {
-	pool: &'a BufferPool<'a>,
+pub(crate) struct BaseBuffer<'a, T: Copy + Clone> {
+	data: &'a HALData,
 	block: MaybeUninit<<SmartAllocator<Backend> as MemoryAllocator<Backend>>::Block>,
-	buffer: MaybeUninit<<Backend as gfx_hal::Backend>::Buffer>,
+	pub(crate) buffer: MaybeUninit<<Backend as gfx_hal::Backend>::Buffer>,
 	usage: Usage,
 	len: buffer::Offset,
 	phantom: PhantomData<T>,
@@ -94,12 +84,12 @@ struct BaseBuffer<'a, T: Copy + Clone> {
 
 impl<T: Copy + Clone> Drop for BaseBuffer<'_, T> {
 	fn drop(&mut self) {
-		let pool = &self.pool;
-		let device = &pool.data.device;
+		let data = &self.data;
+		let device = &data.device;
 		unsafe {
 			device.destroy_buffer(MaybeUninit::take(&mut self.buffer));
 
-			pool.allocator
+			data.allocator
 				.get_ref()
 				.borrow_mut()
 				.free(device, MaybeUninit::take(&mut self.block));
@@ -109,7 +99,7 @@ impl<T: Copy + Clone> Drop for BaseBuffer<'_, T> {
 }
 
 impl<T: Copy + Clone> InnerBuffer for BaseBuffer<'_, T> {
-	fn pool(&self) -> &BufferPool { &self.pool }
+	fn data(&self) -> &HALData { &self.data }
 
 	fn buffer(&self) -> &<Backend as gfx_hal::Backend>::Buffer { unsafe { &self.buffer.get_ref() } }
 
@@ -130,15 +120,20 @@ impl<T: Copy + Clone> InnerBuffer for BaseBuffer<'_, T> {
 	fn rlen(&self) -> buffer::Offset { self.len }
 }
 
-pub struct CPUBuffer<'a, T: Copy + Clone>(BaseBuffer<'a, T>);
-pub struct GPUBuffer<'a, T: Copy + Clone>(BaseBuffer<'a, T>);
+pub struct CPUBuffer<'a, T: Copy + Clone>(pub(crate) BaseBuffer<'a, T>);
+pub struct GPUBuffer<'a, T: Copy + Clone>(pub(crate) BaseBuffer<'a, T>);
+
+pub struct StagingBuffer<'a> {
+	pub(crate) base: BaseBuffer<'a, u8>,
+	pub(crate) command_pool: &'a CommandPool<'a>,
+	pub(crate) fence: Fence<'a>,
+}
 
 impl<'a, T: Copy + Clone> Buffer<'a, T> for CPUBuffer<'a, T> {
-	fn create(pool: &'a BufferPool, usage: Usage, size: buffer::Offset) -> Self {
+	fn create(data: &'a HALData, usage: Usage, size: buffer::Offset) -> Self {
 		unsafe {
-			let device = &pool.data.device;
-
-			let mut allocator = pool.allocator.get_ref().borrow_mut();
+			let device = &data.device;
+			let mut allocator = data.allocator.get_ref().borrow_mut();
 			let size_in_bytes = (size_of::<T>() as buffer::Offset) * size;
 			let mut buffer = device.create_buffer(size_in_bytes, usage).unwrap();
 			let reqs = device.get_buffer_requirements(&buffer);
@@ -156,7 +151,7 @@ impl<'a, T: Copy + Clone> Buffer<'a, T> for CPUBuffer<'a, T> {
 				.bind_buffer_memory(block.memory(), block.range().start, &mut buffer)
 				.unwrap();
 			CPUBuffer(BaseBuffer {
-				pool,
+				data,
 				block: MaybeUninit::new(block),
 				buffer: MaybeUninit::new(buffer),
 				usage,
@@ -165,32 +160,34 @@ impl<'a, T: Copy + Clone> Buffer<'a, T> for CPUBuffer<'a, T> {
 			})
 		}
 	}
-
-	fn upload(&self, mut offset: buffer::Offset, data: &[T]) {
+}
+impl<'a, T: Copy + Clone> CPUBuffer<'a, T> {
+	pub fn upload(&self, mut offset: buffer::Offset, data: &[T]) {
 		assert!(
-			Buffer::len(self) >= data.len() as buffer::Offset,
+			self.0.len >= data.len() as buffer::Offset,
 			"Attempted to upload more data than the buffer could handle!"
 		);
-		let device = &self.pool().data.device;
+		let device = &self.data().device;
 		let size_in_bytes = (size_of::<T>() * data.len()) as buffer::Offset;
 		offset += self.block().range().start;
 		let range = offset..offset + size_in_bytes;
+		let memory = self.block().memory();
 		unsafe {
-			let map = device.map_memory(self.block().memory(), range).unwrap();
+			let map = device.map_memory(memory, range.clone()).unwrap();
 
 			std::ptr::copy_nonoverlapping(data.as_ptr(), map as *mut T, data.len());
 
-			device.unmap_memory(self.block().memory());
+			device.unmap_memory(memory);
 		}
 	}
 }
 
 impl<'a, T: Copy + Clone> Buffer<'a, T> for GPUBuffer<'a, T> {
-	fn create(pool: &'a BufferPool, usage: Usage, size: buffer::Offset) -> Self {
+	fn create(data: &'a HALData, usage: Usage, size: buffer::Offset) -> Self {
 		unsafe {
-			let device = &pool.data.device;
+			let device = &data.device;
 
-			let mut allocator = pool.allocator.get_ref().borrow_mut();
+			let mut allocator = data.allocator.get_ref().borrow_mut();
 			let size_in_bytes = (size_of::<T>() as buffer::Offset) * size;
 			let mut buffer = device
 				.create_buffer(size_in_bytes, usage | Usage::TRANSFER_DST)
@@ -203,7 +200,7 @@ impl<'a, T: Copy + Clone> Buffer<'a, T> for GPUBuffer<'a, T> {
 				.bind_buffer_memory(block.memory(), block.range().start, &mut buffer)
 				.unwrap();
 			GPUBuffer(BaseBuffer {
-				pool,
+				data,
 				block: MaybeUninit::new(block),
 				buffer: MaybeUninit::new(buffer),
 				usage,
@@ -212,37 +209,93 @@ impl<'a, T: Copy + Clone> Buffer<'a, T> for GPUBuffer<'a, T> {
 			})
 		}
 	}
+}
 
-	fn upload(&self, offset: u64, data: &[T]) {
-		let device = &self.pool().data.device;
-		let command_pool = &self.pool().command_pool;
-		let staged = unsafe { &self.pool().staging_buf.get_ref() };
-		let fence = &staged.fence;
+impl<T: Copy + Clone> GPUBuffer<'_, T> {
+	pub fn upload<'b>(&self, offset: u64, data: &'b [T], staging_buf: &'b StagingBuffer) {
+		let device = &self.data().device;
+		let command_pool = &staging_buf.command_pool;
 		let range = BufferCopy {
 			src: 0,
 			dst: offset as buffer::Offset,
 			size: (data.len() * std::mem::size_of::<T>()) as buffer::Offset,
 		};
-		staged.upload(data, device);
-		fence.reset();
-		staged.buf_uses.update(|mut i| {
-			i += 1;
-			if i >= 16 {
-				command_pool.reset();
-				i = 0;
-			}
-			i
-		});
-		command_pool.single_submit(&[], &[], fence, |buffer| unsafe {
-			buffer.copy_buffer(&staged.buffer, self.buffer(), &[range]);
+		staging_buf.upload(data);
+		command_pool.single_submit(&[], &[], &staging_buf.fence, |buffer| unsafe {
+			buffer.copy_buffer(staging_buf.base.buffer.get_ref(), self.buffer(), &[range]);
 		});
 	}
+}
+
+impl<'a> StagingBuffer<'a> {
+	pub fn create(
+		data: &'a HALData,
+		command_pool: &'a CommandPool<'a>,
+		size: buffer::Offset,
+	) -> StagingBuffer<'a> {
+		unsafe {
+			const USAGE: Usage = Usage::TRANSFER_SRC;
+			let device = &data.device;
+
+			let mut allocator = data.allocator.get_ref().borrow_mut();
+			let mut buffer = device.create_buffer(size, USAGE).unwrap();
+			let reqs = device.get_buffer_requirements(&buffer);
+			let block = allocator
+				.alloc(
+					device,
+					(
+						Type::General,
+						Properties::COHERENT | Properties::CPU_VISIBLE,
+					),
+					reqs,
+				)
+				.unwrap();
+			device
+				.bind_buffer_memory(block.memory(), block.range().start, &mut buffer)
+				.unwrap();
+			let fence = data.create_fence();
+			StagingBuffer {
+				base: BaseBuffer {
+					data,
+					block: MaybeUninit::new(block),
+					buffer: MaybeUninit::new(buffer),
+					usage: USAGE,
+					len: size,
+					phantom: PhantomData,
+				},
+				command_pool,
+				fence,
+			}
+		}
+	}
+
+	pub(crate) fn upload<T: Copy + Clone>(&self, data: &[T]) {
+		let size_in_bytes = (size_of::<T>() * data.len()) as buffer::Offset;
+		assert!(
+			self.base.len >= size_in_bytes,
+			"Attempted to upload more data than the buffer could handle!"
+		);
+		let device = &self.base.data.device;
+		let offset = self.base.block().range().start;
+		let range = offset..offset + size_in_bytes;
+		let memory = self.base.block().memory();
+		self.fence.wait_n_reset();
+		unsafe {
+			let map = device.map_memory(memory, range.clone()).unwrap();
+
+			std::ptr::copy_nonoverlapping(data.as_ptr(), map as *mut T, data.len());
+
+			device.unmap_memory(memory);
+		}
+	}
+
+	pub(crate) fn wait_on_upload(&self) { self.fence.wait() }
 }
 
 macro_rules! impl_inner {
 	($name: ident) => {
 		impl<T: Copy + Clone> InnerBuffer for $name<'_, T> {
-			fn pool(&self) -> &BufferPool { self.0.pool() }
+			fn data(&self) -> &HALData { &self.0.data() }
 
 			fn rusage(&self) -> Usage { self.0.rusage() }
 

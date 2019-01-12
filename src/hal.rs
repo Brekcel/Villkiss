@@ -1,12 +1,16 @@
 use std::{
 	borrow::Borrow,
 	cell::RefCell,
+	mem::MaybeUninit,
 };
 
 #[cfg(not(feature = "gl"))]
 use gfx_hal::adapter::DeviceType;
 use gfx_hal::{
-	adapter::Adapter,
+	adapter::{
+		Adapter,
+		PhysicalDevice,
+	},
 	command::{
 		Primary,
 		Submittable,
@@ -21,12 +25,15 @@ use gfx_hal::{
 	Surface,
 	Swapchain as HAL_Swapchain,
 };
+use gfx_memory::SmartAllocator;
 
 #[cfg(not(feature = "gl"))]
 use crate::gfx_back;
 use crate::{
+	buffer::StagingBuffer,
 	gfx_back::Backend,
 	shader::*,
+	texture::TextureInfo,
 	*,
 };
 
@@ -35,6 +42,7 @@ pub struct HALData {
 	pub(crate) queue_group: RefCell<QueueGroup<Backend, Graphics>>,
 	pub(crate) surface: RefCell<<Backend as gfx_hal::Backend>::Surface>,
 	pub(crate) adapter: Adapter<Backend>,
+	pub(crate) allocator: MaybeUninit<RefCell<SmartAllocator<Backend>>>,
 	#[cfg(not(feature = "gl"))]
 	pub(crate) instance: gfx_back::Instance,
 }
@@ -73,12 +81,19 @@ impl<'a> HALData {
 				surface.supports_queue_family(family) && family.supports_graphics()
 			})
 			.expect("Unable to open adapter");
-
+		let allocator = SmartAllocator::new(
+			adapter.physical_device.memory_properties(),
+			4096,
+			8,
+			64,
+			134217728,
+		);
 		HALData {
 			device,
 			queue_group: RefCell::new(queue_group),
 			surface: RefCell::new(surface),
 			adapter,
+			allocator: MaybeUninit::new(RefCell::new(allocator)),
 			#[cfg(not(feature = "gl"))]
 			instance,
 		}
@@ -99,15 +114,13 @@ impl<'a> HALData {
 
 	pub fn create_command_pool(&self) -> CommandPool { CommandPool::create(self) }
 
-	pub fn create_swapchain(&'a self, pool: &'a BufferPool<'a>) -> Swapchain<'a> {
-		Swapchain::create(self, pool)
+	pub fn create_swapchain<'b>(&'a self, staging_buf: &'b StagingBuffer) -> Swapchain<'a> {
+		Swapchain::create(self, staging_buf)
 	}
 
 	pub fn create_fence(&self) -> Fence { Fence::create(self) }
 
 	pub fn create_semaphore(&self) -> Semaphore { Semaphore::create(self) }
-
-	pub fn create_bufferpool(&self) -> BufferPool { BufferPool::create(self) }
 
 	pub(crate) fn submit<'b, T, Ic, S, Iw, Is>(&self, sub: Submission<Ic, Iw, Is>, fence: &Fence)
 	where
@@ -137,5 +150,13 @@ impl<'a> HALData {
 	pub fn wait_idle(&self) {
 		self.device.wait_idle().unwrap();
 		self.queue_group.borrow_mut().queues[0].wait_idle().unwrap();
+	}
+
+	pub fn create_texture<'b>(
+		&self,
+		info: TextureInfo<'b>,
+		staging_buf: &'b StagingBuffer,
+	) -> Texture {
+		Texture::create(self, info, staging_buf)
 	}
 }
