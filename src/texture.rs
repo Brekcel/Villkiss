@@ -52,7 +52,7 @@ use gfx_memory::{
 };
 
 use crate::{
-	buffer::StagingBuffer,
+	buffer::{inner::InnerBuffer, StagingBuffer},
 	gfx_back::Backend,
 	util::TakeExt,
 	CommandPool,
@@ -183,7 +183,7 @@ impl<'a> Texture<'a> {
 						);
 						unsafe {
 							cmd_buf.copy_buffer_to_image(
-								&staging_buf.base.buffer.get_ref(),
+								&staging_buf.hal_buffer(),
 								&image,
 								Layout::TransferDstOptimal,
 								once(copy),

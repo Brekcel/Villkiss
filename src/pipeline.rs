@@ -45,7 +45,7 @@ use crate::{
 		VertexInfo,
 	},
 	util::TakeExt,
-	Buffer,
+	buffer::{BufferView, Buffer},
 	RenderPass,
 };
 
@@ -198,18 +198,18 @@ impl<
 		Constants: PushConstantInfo,
 	> BoundPipe<'a, C, Vertex, Uniforms, Index, Constants>
 {
-	pub fn bind_vertex_buffer<'b>(&mut self, buffer: &impl Buffer<'b, Vertex>) {
+	pub fn bind_vertex_buffer<'b, T: Buffer<'b>>(&mut self, buffer: &BufferView<'b, T>) {
 		unsafe {
 			self.encoder
-				.bind_vertex_buffers(0, once((buffer.buffer(), 0)));
+				.bind_vertex_buffers(0, once((buffer.hal_buffer(), buffer.offset())));
 		}
 	}
 
-	pub fn bind_index_buffer<'b>(&mut self, buffer: &impl Buffer<'b, Index>) {
+	pub fn bind_index_buffer<'b, T: Buffer<'b>>(&mut self, buffer: &BufferView<'b, T>) {
 		unsafe {
 			self.encoder.bind_index_buffer(IndexBufferView {
-				buffer: buffer.buffer(),
-				offset: 0,
+				buffer: buffer.hal_buffer(),
+				offset: buffer.offset(),
 				index_type: Index::HAL,
 			});
 		}

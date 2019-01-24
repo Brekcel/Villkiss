@@ -1,4 +1,5 @@
 use gfx_hal::{
+	adapter::PhysicalDevice,
 	buffer::{
 		self,
 		Usage,
@@ -9,12 +10,14 @@ use gfx_hal::{
 	Device,
 };
 use std::{
+	any::TypeId,
 	marker::PhantomData,
 	mem::{
 		size_of,
 		MaybeUninit,
 	},
 	ops::Range,
+	sync::Arc,
 };
 
 use gfx_memory::{
@@ -39,50 +42,100 @@ pub(crate) mod inner {
 		gfx_back::Backend,
 		HALData,
 	};
-	use gfx_hal::buffer;
 	use gfx_memory::{
 		MemoryAllocator,
 		SmartAllocator,
 	};
 	pub trait InnerBuffer {
 		fn data(&self) -> &HALData;
-		fn rusage(&self) -> buffer::Usage;
-		fn rlen(&self) -> buffer::Offset;
-		fn buffer(&self) -> &<Backend as gfx_hal::Backend>::Buffer;
+		fn hal_buffer(&self) -> &<Backend as gfx_hal::Backend>::Buffer;
 		fn block(&self) -> &<SmartAllocator<Backend> as MemoryAllocator<Backend>>::Block;
-
-		fn own_buffer(&mut self) -> <Backend as gfx_hal::Backend>::Buffer;
-		fn own_block(&mut self) -> <SmartAllocator<Backend> as MemoryAllocator<Backend>>::Block;
 	}
 }
 
-pub trait Buffer<'a, T: Sized + Copy + Clone>: InnerBuffer + Sized {
-	fn create(data: &'a HALData, usage: Usage, size: buffer::Offset) -> Self;
-
-	fn descriptor(&self) -> Descriptor<Backend> { Descriptor::Buffer(self.buffer(), None..None) }
-
-	fn descriptor_to_end(&self, start: usize) -> Descriptor<Backend> {
-		Descriptor::Buffer(self.buffer(), Some(start as u64)..None)
-	}
-
-	fn descriptor_range(&self, range: Range<usize>) -> Descriptor<Backend> {
-		Descriptor::Buffer(
-			self.buffer(),
-			Some(range.start as u64)..Some(range.end as u64),
-		)
-	}
+pub trait Buffer<'a>: Sized + InnerBuffer {
+	fn create<'b>(data: &'a HALData, descs: &'b [BufferViewDesc]) -> Vec<BufferView<'a, Self>>;
 }
 
-pub(crate) struct BaseBuffer<'a, T: Copy + Clone> {
+pub(crate) struct BaseBuffer<'a> {
 	data: &'a HALData,
 	block: MaybeUninit<<SmartAllocator<Backend> as MemoryAllocator<Backend>>::Block>,
-	pub(crate) buffer: MaybeUninit<<Backend as gfx_hal::Backend>::Buffer>,
-	usage: Usage,
-	len: buffer::Offset,
-	phantom: PhantomData<T>,
+	buffer: MaybeUninit<<Backend as gfx_hal::Backend>::Buffer>,
+	size_in_bytes: buffer::Offset,
 }
 
-impl<T: Copy + Clone> Drop for BaseBuffer<'_, T> {
+impl InnerBuffer for BaseBuffer<'_> {
+	fn data(&self) -> &HALData { &self.data }
+
+	fn hal_buffer(&self) -> &<Backend as gfx_hal::Backend>::Buffer {
+		unsafe { &self.buffer.get_ref() }
+	}
+
+	fn block(&self) -> &<SmartAllocator<Backend> as MemoryAllocator<Backend>>::Block {
+		unsafe { &self.block.get_ref() }
+	}
+}
+
+impl<'a> BaseBuffer<'a> {
+	fn create_descs<'b>(
+		data: &'a HALData,
+		descs: &'b [BufferViewDesc],
+		extra_usage: Usage,
+		props: Properties,
+	) -> (Vec<buffer::Offset>, Self) {
+		let usage = extra_usage |
+			descs
+				.iter()
+				.fold(Usage::empty(), |usage, desc| usage | desc.usage);
+		let align = if usage.contains(Usage::UNIFORM) {
+			let phys_device = &data.adapter.physical_device;
+			phys_device.limits().min_uniform_buffer_offset_alignment
+		} else {
+			1
+		};
+		let sizes = descs
+			.iter()
+			.map(|desc| {
+				let size = desc.len * desc.type_size;
+				let padding = (align - (size % align)) % align;
+				size + padding
+			})
+			.collect::<Vec<_>>();
+
+		let size_in_bytes = sizes.iter().fold(0, |len, add_len| len + add_len);
+		(sizes, Self::create(data, usage, props, size_in_bytes))
+	}
+
+	fn create(
+		data: &'a HALData,
+		usage: Usage,
+		props: Properties,
+		size_in_bytes: buffer::Offset,
+	) -> Self {
+		println!("Creating Buffer");
+		unsafe {
+			let device = &data.device;
+			let mut allocator = data.allocator.get_ref().borrow_mut();
+
+			let mut buffer = device.create_buffer(size_in_bytes, usage).unwrap();
+			let reqs = device.get_buffer_requirements(&buffer);
+			let block = allocator
+				.alloc(device, (Type::General, props), reqs)
+				.unwrap();
+			device
+				.bind_buffer_memory(block.memory(), block.range().start, &mut buffer)
+				.unwrap();
+			BaseBuffer {
+				data,
+				block: MaybeUninit::new(block),
+				buffer: MaybeUninit::new(buffer),
+				size_in_bytes,
+			}
+		}
+	}
+}
+
+impl Drop for BaseBuffer<'_> {
 	fn drop(&mut self) {
 		let data = &self.data;
 		let device = &data.device;
@@ -94,85 +147,124 @@ impl<T: Copy + Clone> Drop for BaseBuffer<'_, T> {
 				.borrow_mut()
 				.free(device, MaybeUninit::take(&mut self.block));
 		}
-		println!("Dropped buffer");
+		println!("Dropped Buffer");
 	}
 }
 
-impl<T: Copy + Clone> InnerBuffer for BaseBuffer<'_, T> {
-	fn data(&self) -> &HALData { &self.data }
-
-	fn buffer(&self) -> &<Backend as gfx_hal::Backend>::Buffer { unsafe { &self.buffer.get_ref() } }
-
-	fn block(&self) -> &<SmartAllocator<Backend> as MemoryAllocator<Backend>>::Block {
-		unsafe { &self.block.get_ref() }
-	}
-
-	fn own_buffer(&mut self) -> <Backend as gfx_hal::Backend>::Buffer {
-		MaybeUninit::take(&mut self.buffer)
-	}
-
-	fn own_block(&mut self) -> <SmartAllocator<Backend> as MemoryAllocator<Backend>>::Block {
-		MaybeUninit::take(&mut self.block)
-	}
-
-	fn rusage(&self) -> Usage { self.usage }
-
-	fn rlen(&self) -> buffer::Offset { self.len }
-}
-
-pub struct CPUBuffer<'a, T: Copy + Clone>(pub(crate) BaseBuffer<'a, T>);
-pub struct GPUBuffer<'a, T: Copy + Clone>(pub(crate) BaseBuffer<'a, T>);
+pub struct CPUBuffer<'a>(BaseBuffer<'a>);
+pub struct GPUBuffer<'a>(BaseBuffer<'a>);
 
 pub struct StagingBuffer<'a> {
-	pub(crate) base: BaseBuffer<'a, u8>,
+	base: BaseBuffer<'a>,
 	pub(crate) command_pool: &'a CommandPool<'a>,
 	pub(crate) fence: Fence<'a>,
 }
 
-impl<'a, T: Copy + Clone> Buffer<'a, T> for CPUBuffer<'a, T> {
-	fn create(data: &'a HALData, usage: Usage, size: buffer::Offset) -> Self {
-		unsafe {
-			let device = &data.device;
-			let mut allocator = data.allocator.get_ref().borrow_mut();
-			let size_in_bytes = (size_of::<T>() as buffer::Offset) * size;
-			let mut buffer = device.create_buffer(size_in_bytes, usage).unwrap();
-			let reqs = device.get_buffer_requirements(&buffer);
-			let block = allocator
-				.alloc(
-					device,
-					(
-						Type::General,
-						Properties::COHERENT | Properties::CPU_VISIBLE,
-					),
-					reqs,
-				)
-				.unwrap();
-			device
-				.bind_buffer_memory(block.memory(), block.range().start, &mut buffer)
-				.unwrap();
-			CPUBuffer(BaseBuffer {
-				data,
-				block: MaybeUninit::new(block),
-				buffer: MaybeUninit::new(buffer),
-				usage,
-				len: size,
-				phantom: PhantomData,
-			})
+#[derive(Debug, Copy, Clone)]
+pub struct BufferViewDesc {
+	type_id: TypeId,
+	type_size: buffer::Offset,
+	usage: Usage,
+	len: buffer::Offset,
+	offset: buffer::Offset,
+}
+
+impl BufferViewDesc {
+	pub fn create_desc<T: 'static>(usage: Usage, len: buffer::Offset) -> BufferViewDesc {
+		BufferViewDesc {
+			type_id: TypeId::of::<T>(),
+			type_size: size_of::<T>() as buffer::Offset,
+			usage,
+			len,
+			offset: 0,
 		}
 	}
 }
-impl<'a, T: Copy + Clone> CPUBuffer<'a, T> {
-	pub fn upload(&self, mut offset: buffer::Offset, data: &[T]) {
-		assert!(
-			self.0.len >= data.len() as buffer::Offset,
-			"Attempted to upload more data than the buffer could handle!"
+
+pub struct BufferView<'a, T: Buffer<'a>> {
+	buffer: Arc<T>,
+	desc: BufferViewDesc,
+	phantom: PhantomData<&'a T>,
+}
+
+impl<'a, T: Buffer<'a>> BufferView<'a, T> {
+	fn fold_descs(
+		buffer: Arc<T>,
+		descs: &[BufferViewDesc],
+		sizes: Vec<buffer::Offset>,
+	) -> Vec<BufferView<'a, T>> {
+		let mut base_offset = 0;
+		descs
+			.iter()
+			.zip(sizes.iter())
+			.map(|(desc, size)| BufferView {
+				buffer: buffer.clone(),
+				desc: {
+					let mut desc = *desc;
+					desc.offset = {
+						let tmp = base_offset;
+						base_offset += size;
+						tmp
+					};
+					desc
+				},
+				phantom: PhantomData,
+			})
+			.collect()
+	}
+
+	pub fn descriptor(&self) -> Descriptor<Backend> { self.descriptor_to_end(0) }
+
+	pub fn descriptor_to_end(&self, start: usize) -> Descriptor<Backend> {
+		self.descriptor_range(0..self.desc.len as usize)
+	}
+
+	pub fn descriptor_range(&self, range: Range<usize>) -> Descriptor<Backend> {
+		let range: Range<buffer::Offset> = range.start as _..range.end as _;
+		assert!(range.start <= range.end);
+		assert!(range.end <= self.desc().len);
+		let abs_beg = self.offset() + (range.start * self.desc().type_size);
+		let abs_end = self.offset() + (range.end * self.desc().type_size);
+		Descriptor::Buffer(self.hal_buffer(), Some(abs_beg)..Some(abs_end))
+	}
+
+	pub(crate) fn size(&self) -> buffer::Offset { self.desc.type_size * self.desc.len }
+
+	pub(crate) fn hal_buffer(&self) -> &<Backend as gfx_hal::Backend>::Buffer {
+		self.buffer().hal_buffer()
+	}
+
+	pub(crate) fn buffer(&self) -> &T { self.buffer.as_ref() }
+
+	pub(crate) fn offset(&self) -> buffer::Offset { self.desc.offset }
+
+	pub(crate) fn desc(&self) -> &BufferViewDesc { &self.desc }
+}
+
+impl<'a> Buffer<'a> for CPUBuffer<'a> {
+	fn create<'b>(data: &'a HALData, descs: &'b [BufferViewDesc]) -> Vec<BufferView<'a, Self>> {
+		let (sizes, base) = BaseBuffer::create_descs(
+			data,
+			descs,
+			Usage::empty(),
+			Properties::COHERENT | Properties::CPU_VISIBLE,
 		);
-		let device = &self.data().device;
-		let size_in_bytes = (size_of::<T>() * data.len()) as buffer::Offset;
-		offset += self.block().range().start;
+		BufferView::fold_descs(Arc::new(CPUBuffer(base)), descs, sizes)
+	}
+}
+
+impl<'a> BufferView<'a, CPUBuffer<'a>> {
+	pub fn upload<T: 'static>(&self, mut offset: buffer::Offset, data: &[T]) {
+		assert!(self.desc.len >= data.len() as buffer::Offset);
+		assert_eq!(self.desc.type_id, TypeId::of::<T>());
+		let device = &self.buffer.0.data.device;
+		let size_in_bytes = self.desc.type_size * (data.len() as buffer::Offset);
+		offset += self.offset();
+		offset += self.buffer.block().range().start;
 		let range = offset..offset + size_in_bytes;
-		let memory = self.block().memory();
 		unsafe {
+			let memory = self.buffer.0.block.get_ref().memory();
+
 			let map = device.map_memory(memory, range.clone()).unwrap();
 
 			std::ptr::copy_nonoverlapping(data.as_ptr(), map as *mut T, data.len());
@@ -182,48 +274,40 @@ impl<'a, T: Copy + Clone> CPUBuffer<'a, T> {
 	}
 }
 
-impl<'a, T: Copy + Clone> Buffer<'a, T> for GPUBuffer<'a, T> {
-	fn create(data: &'a HALData, usage: Usage, size: buffer::Offset) -> Self {
-		unsafe {
-			let device = &data.device;
-
-			let mut allocator = data.allocator.get_ref().borrow_mut();
-			let size_in_bytes = (size_of::<T>() as buffer::Offset) * size;
-			let mut buffer = device
-				.create_buffer(size_in_bytes, usage | Usage::TRANSFER_DST)
-				.unwrap();
-			let reqs = device.get_buffer_requirements(&buffer);
-			let block = allocator
-				.alloc(device, (Type::General, Properties::DEVICE_LOCAL), reqs)
-				.unwrap();
-			device
-				.bind_buffer_memory(block.memory(), block.range().start, &mut buffer)
-				.unwrap();
-			GPUBuffer(BaseBuffer {
-				data,
-				block: MaybeUninit::new(block),
-				buffer: MaybeUninit::new(buffer),
-				usage,
-				len: size,
-				phantom: PhantomData,
-			})
-		}
+impl<'a> Buffer<'a> for GPUBuffer<'a> {
+	fn create<'b>(data: &'a HALData, descs: &'b [BufferViewDesc]) -> Vec<BufferView<'a, Self>> {
+		let (sizes, base) =
+			BaseBuffer::create_descs(data, descs, Usage::TRANSFER_DST, Properties::DEVICE_LOCAL);
+		BufferView::fold_descs(Arc::new(GPUBuffer(base)), descs, sizes)
 	}
 }
 
-impl<T: Copy + Clone> GPUBuffer<'_, T> {
-	pub fn upload<'b>(&self, offset: u64, data: &'b [T], staging_buf: &'b StagingBuffer) {
-		let device = &self.data().device;
+impl<'a> BufferView<'a, GPUBuffer<'a>> {
+	pub fn staged_upload<'b, T: 'static + Copy + Clone>(
+		&self,
+		mut offset: buffer::Offset,
+		data: &'b [T],
+		staging_buf: &'b StagingBuffer,
+	) {
+		assert!(self.desc.len >= data.len() as buffer::Offset);
+		assert_eq!(self.desc.type_id, TypeId::of::<T>());
+		let device = &self.buffer.0.data.device;
 		let command_pool = &staging_buf.command_pool;
+
+		offset += self.offset();
 		let range = BufferCopy {
 			src: 0,
-			dst: offset as buffer::Offset,
+			dst: offset,
 			size: (data.len() * std::mem::size_of::<T>()) as buffer::Offset,
 		};
 		staging_buf.upload(data);
 		command_pool.single_submit(&[], &[], &staging_buf.fence, |buffer| unsafe {
-			buffer.copy_buffer(staging_buf.base.buffer.get_ref(), self.buffer(), &[range]);
-		});
+			buffer.copy_buffer(
+				staging_buf.base.buffer.get_ref(),
+				self.hal_buffer(),
+				&[range],
+			);
+		})
 	}
 }
 
@@ -233,46 +317,24 @@ impl<'a> StagingBuffer<'a> {
 		command_pool: &'a CommandPool<'a>,
 		size: buffer::Offset,
 	) -> StagingBuffer<'a> {
-		unsafe {
-			const USAGE: Usage = Usage::TRANSFER_SRC;
-			let device = &data.device;
-
-			let mut allocator = data.allocator.get_ref().borrow_mut();
-			let mut buffer = device.create_buffer(size, USAGE).unwrap();
-			let reqs = device.get_buffer_requirements(&buffer);
-			let block = allocator
-				.alloc(
-					device,
-					(
-						Type::General,
-						Properties::COHERENT | Properties::CPU_VISIBLE,
-					),
-					reqs,
-				)
-				.unwrap();
-			device
-				.bind_buffer_memory(block.memory(), block.range().start, &mut buffer)
-				.unwrap();
-			let fence = data.create_fence();
-			StagingBuffer {
-				base: BaseBuffer {
-					data,
-					block: MaybeUninit::new(block),
-					buffer: MaybeUninit::new(buffer),
-					usage: USAGE,
-					len: size,
-					phantom: PhantomData,
-				},
-				command_pool,
-				fence,
-			}
+		let fence = data.create_fence();
+		fence.reset();
+		StagingBuffer {
+			base: BaseBuffer::create(
+				data,
+				Usage::TRANSFER_SRC,
+				Properties::COHERENT | Properties::CPU_VISIBLE,
+				size,
+			),
+			command_pool,
+			fence,
 		}
 	}
 
 	pub(crate) fn upload<T: Copy + Clone>(&self, data: &[T]) {
 		let size_in_bytes = (size_of::<T>() * data.len()) as buffer::Offset;
 		assert!(
-			self.base.len >= size_in_bytes,
+			self.base.size_in_bytes >= size_in_bytes,
 			"Attempted to upload more data than the buffer could handle!"
 		);
 		let device = &self.base.data.device;
@@ -289,32 +351,18 @@ impl<'a> StagingBuffer<'a> {
 		}
 	}
 
-	pub(crate) fn wait_on_upload(&self) { self.fence.wait() }
+	pub fn wait_on_upload(&self) { self.fence.wait() }
 }
 
 macro_rules! impl_inner {
 	($name: ident) => {
-		impl<T: Copy + Clone> InnerBuffer for $name<'_, T> {
+		impl InnerBuffer for $name<'_> {
 			fn data(&self) -> &HALData { &self.0.data() }
 
-			fn rusage(&self) -> Usage { self.0.rusage() }
-
-			fn rlen(&self) -> buffer::Offset { self.0.rlen() }
-
-			fn buffer(&self) -> &<Backend as gfx_hal::Backend>::Buffer { self.0.buffer() }
+			fn hal_buffer(&self) -> &<Backend as gfx_hal::Backend>::Buffer { self.0.hal_buffer() }
 
 			fn block(&self) -> &<SmartAllocator<Backend> as MemoryAllocator<Backend>>::Block {
 				self.0.block()
-			}
-
-			fn own_buffer(&mut self) -> <Backend as gfx_hal::Backend>::Buffer {
-				self.0.own_buffer()
-			}
-
-			fn own_block(
-				&mut self,
-			) -> <SmartAllocator<Backend> as MemoryAllocator<Backend>>::Block {
-				self.0.own_block()
 			}
 		}
 	};
@@ -322,3 +370,13 @@ macro_rules! impl_inner {
 
 impl_inner!(GPUBuffer);
 impl_inner!(CPUBuffer);
+
+impl InnerBuffer for StagingBuffer<'_> {
+	fn data(&self) -> &HALData { &self.base.data() }
+
+	fn hal_buffer(&self) -> &<Backend as gfx_hal::Backend>::Buffer { self.base.hal_buffer() }
+
+	fn block(&self) -> &<SmartAllocator<Backend> as MemoryAllocator<Backend>>::Block {
+		self.base.block()
+	}
+}
