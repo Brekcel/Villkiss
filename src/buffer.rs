@@ -241,7 +241,7 @@ impl<'a, T: Buffer<'a>> BufferView<'a, T> {
 		self.buffer().hal_buffer()
 	}
 
-	pub(crate) fn type_id(&self) -> &TypeId { &self.desc.type_id }
+	pub(crate) fn type_id(&self) -> TypeId { self.desc.type_id }
 
 	pub(crate) fn offset(&self) -> buffer::Offset { self.desc.offset() }
 

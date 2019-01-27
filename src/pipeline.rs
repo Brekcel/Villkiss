@@ -203,7 +203,7 @@ impl<
 	> BoundPipe<'a, C, Vertex, Uniforms, Index, Constants>
 {
 	pub fn bind_vertex_buffer<'b, T: Buffer<'b>>(&mut self, buffer: &BufferView<'b, T>) {
-		assert_eq!(*buffer.type_id(), TypeId::of::<Vertex>());
+		assert_eq!(buffer.type_id(), TypeId::of::<Vertex>());
 		unsafe {
 			self.encoder
 				.bind_vertex_buffers(0, once((buffer.hal_buffer(), buffer.offset())));
@@ -211,7 +211,7 @@ impl<
 	}
 
 	pub fn bind_index_buffer<'b, T: Buffer<'b>>(&mut self, buffer: &BufferView<'b, T>) {
-		assert_eq!(*buffer.type_id(), TypeId::of::<Index>());
+		assert_eq!(buffer.type_id(), TypeId::of::<Index>());
 		unsafe {
 			self.encoder.bind_index_buffer(IndexBufferView {
 				buffer: buffer.hal_buffer(),
