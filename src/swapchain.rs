@@ -17,7 +17,6 @@ use gfx_hal::{
 	window::Extent2D,
 	AcquireError,
 	Backbuffer,
-	CompositeAlpha,
 	Device,
 	FrameSync,
 	PresentMode,
@@ -59,11 +58,11 @@ pub struct Swapchain<'a> {
 impl<'a> Swapchain<'a> {
 	pub(crate) fn create<'b>(data: &'a HALData, staging_buf: &'b StagingBuffer) -> Swapchain<'a> {
 		println!("Creating Swapchain");
-		let device = &data.device;
-		let (capabilities, formats, _, composite_alpha) = data
-			.surface
+		let device = data.device();
+		let (capabilities, formats, _) = data
+			.surface()
 			.borrow()
-			.compatibility(&data.adapter.physical_device);
+			.compatibility(&data.adapter().physical_device);
 		let surface_color_format = match formats {
 			Some(choices) => choices
 				.into_iter()
@@ -71,24 +70,19 @@ impl<'a> Swapchain<'a> {
 				.unwrap(),
 			None => Format::Rgba8Srgb,
 		};
-		let swap_config = {
-			let mut swap_config = SwapchainConfig::from_caps(
-				&capabilities,
-				surface_color_format,
-				Extent2D {
-					width: 800,
-					height: 600,
-				},
-			)
-			.with_mode(PresentMode::Mailbox);
-			swap_config.composite_alpha =
-				*composite_alpha.get(0).unwrap_or(&CompositeAlpha::Inherit);
-			swap_config
-		};
+		let swap_config = SwapchainConfig::from_caps(
+			&capabilities,
+			surface_color_format,
+			Extent2D {
+				width: 800,
+				height: 600,
+			},
+		)
+		.with_mode(PresentMode::Mailbox);
 		let dims = swap_config.extent.to_extent();
 		let (swapchain, backbuffer) = unsafe {
 			device
-				.create_swapchain(&mut data.surface.borrow_mut(), swap_config, None)
+				.create_swapchain(&mut data.surface().borrow_mut(), swap_config, None)
 				.unwrap()
 		};
 		let depth_tex = data.create_texture(
@@ -161,7 +155,7 @@ impl<'a> Swapchain<'a> {
 
 impl<'a> Drop for Swapchain<'a> {
 	fn drop(&mut self) {
-		let device = &self.data.device;
+		let device = self.data.device();
 		//		#[cfg(not(feature = "gl"))]
 		unsafe {
 			device.destroy_swapchain(RefCell::into_inner(MaybeUninit::take(&mut self.swapchain)));

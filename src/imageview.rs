@@ -34,7 +34,7 @@ impl<'a> ImageView<'a> {
 		mip_levels: u8,
 	) -> ImageView<'a> {
 		println!("Creating ImageView");
-		let device = &data.device;
+		let device = data.device();
 		let sub_range = SubresourceRange {
 			aspects,
 			levels: 0..mip_levels,
@@ -58,7 +58,7 @@ impl<'a> ImageView<'a> {
 
 impl<'a> Drop for ImageView<'a> {
 	fn drop(&mut self) {
-		let device = &self.data.device;
+		let device = self.data.device();
 		unsafe {
 			device.destroy_image_view(MaybeUninit::take(&mut self.view));
 		}

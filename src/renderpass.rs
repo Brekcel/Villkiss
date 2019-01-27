@@ -52,13 +52,13 @@ pub struct RenderPass<'a> {
 impl<'a> RenderPass<'a> {
 	pub(crate) fn create(swapchain: &'a Swapchain) -> RenderPass<'a> {
 		println!("Creating Renderpass");
-		let device = &swapchain.data.device;
+		let device = swapchain.data.device();
 		let render_pass = {
-			let (capabilities, formats, _, _) = swapchain
+			let (capabilities, formats, _) = swapchain
 				.data
-				.surface
+				.surface()
 				.borrow()
-				.compatibility(&swapchain.data.adapter.physical_device);
+				.compatibility(&swapchain.data.adapter().physical_device);
 			let surface_color_format = match formats {
 				Some(choices) => choices
 					.into_iter()
@@ -165,7 +165,7 @@ impl<'a> RenderPass<'a> {
 
 impl<'a> Drop for RenderPass<'a> {
 	fn drop(&mut self) {
-		let device = &self.swapchain.data.device;
+		let device = self.swapchain.data.device();
 		unsafe {
 			device.destroy_render_pass(MaybeUninit::take(&mut self.pass));
 		}

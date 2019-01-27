@@ -16,7 +16,7 @@ pub struct Semaphore<'a> {
 impl<'a> Semaphore<'a> {
 	pub(crate) fn create(data: &'a HALData) -> Semaphore<'a> {
 		println!("Creating Semaphore");
-		let semaphore = data.device.create_semaphore().unwrap();
+		let semaphore = data.device().create_semaphore().unwrap();
 		Semaphore {
 			data,
 			semaphore: MaybeUninit::new(semaphore),
@@ -34,7 +34,7 @@ impl<'a> Semaphore<'a> {
 
 impl<'a> Drop for Semaphore<'a> {
 	fn drop(&mut self) {
-		let device = &self.data.device;
+		let device = self.data.device();
 		unsafe {
 			device.destroy_semaphore(MaybeUninit::take(&mut self.semaphore));
 		}

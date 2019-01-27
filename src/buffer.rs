@@ -88,7 +88,7 @@ impl<'a> BaseBuffer<'a> {
 				.iter()
 				.fold(Usage::empty(), |usage, desc| usage | desc.usage);
 		let align = if usage.contains(Usage::UNIFORM) {
-			let phys_device = &data.adapter.physical_device;
+			let phys_device = &data.adapter().physical_device;
 			phys_device.limits().min_uniform_buffer_offset_alignment
 		} else {
 			1
@@ -114,8 +114,8 @@ impl<'a> BaseBuffer<'a> {
 	) -> Self {
 		println!("Creating Buffer");
 		unsafe {
-			let device = &data.device;
-			let mut allocator = data.allocator.get_ref().borrow_mut();
+			let device = data.device();
+			let mut allocator = data.allocator().borrow_mut();
 
 			let mut buffer = device.create_buffer(size_in_bytes, usage).unwrap();
 			let reqs = device.get_buffer_requirements(&buffer);
@@ -138,12 +138,11 @@ impl<'a> BaseBuffer<'a> {
 impl Drop for BaseBuffer<'_> {
 	fn drop(&mut self) {
 		let data = &self.data;
-		let device = &data.device;
+		let device = data.device();
 		unsafe {
 			device.destroy_buffer(MaybeUninit::take(&mut self.buffer));
 
-			data.allocator
-				.get_ref()
+			data.allocator()
 				.borrow_mut()
 				.free(device, MaybeUninit::take(&mut self.block));
 		}
@@ -179,6 +178,14 @@ impl BufferViewDesc {
 			offset: 0,
 		}
 	}
+
+	pub(crate) fn type_size(&self) -> buffer::Offset { self.type_size }
+
+	pub(crate) fn usage(&self) -> Usage { self.usage }
+
+	pub(crate) fn len(&self) -> buffer::Offset { self.len }
+
+	pub(crate) fn offset(&self) -> buffer::Offset { self.offset }
 }
 
 pub struct BufferView<'a, T: Buffer<'a>> {
@@ -234,9 +241,11 @@ impl<'a, T: Buffer<'a>> BufferView<'a, T> {
 		self.buffer().hal_buffer()
 	}
 
-	pub(crate) fn buffer(&self) -> &T { self.buffer.as_ref() }
+	pub(crate) fn type_id(&self) -> &TypeId { &self.desc.type_id }
 
-	pub(crate) fn offset(&self) -> buffer::Offset { self.desc.offset }
+	pub(crate) fn offset(&self) -> buffer::Offset { self.desc.offset() }
+
+	pub(crate) fn buffer(&self) -> &T { self.buffer.as_ref() }
 
 	pub(crate) fn desc(&self) -> &BufferViewDesc { &self.desc }
 }
@@ -257,7 +266,7 @@ impl<'a> BufferView<'a, CPUBuffer<'a>> {
 	pub fn upload<T: 'static>(&self, mut offset: buffer::Offset, data: &[T]) {
 		assert!(self.desc.len >= data.len() as buffer::Offset);
 		assert_eq!(self.desc.type_id, TypeId::of::<T>());
-		let device = &self.buffer.0.data.device;
+		let device = self.buffer.0.data.device();
 		let size_in_bytes = self.desc.type_size * (data.len() as buffer::Offset);
 		offset += self.offset();
 		offset += self.buffer.block().range().start;
@@ -291,7 +300,7 @@ impl<'a> BufferView<'a, GPUBuffer<'a>> {
 	) {
 		assert!(self.desc.len >= data.len() as buffer::Offset);
 		assert_eq!(self.desc.type_id, TypeId::of::<T>());
-		let device = &self.buffer.0.data.device;
+		let device = self.buffer.0.data.device();
 		let command_pool = &staging_buf.command_pool;
 
 		offset += self.offset();
@@ -337,7 +346,7 @@ impl<'a> StagingBuffer<'a> {
 			self.base.size_in_bytes >= size_in_bytes,
 			"Attempted to upload more data than the buffer could handle!"
 		);
-		let device = &self.base.data.device;
+		let device = self.base.data.device();
 		let offset = self.base.block().range().start;
 		let range = offset..offset + size_in_bytes;
 		let memory = self.base.block().memory();
@@ -355,28 +364,21 @@ impl<'a> StagingBuffer<'a> {
 }
 
 macro_rules! impl_inner {
-	($name: ident) => {
+	($name: ident, $base: tt) => {
 		impl InnerBuffer for $name<'_> {
-			fn data(&self) -> &HALData { &self.0.data() }
+			fn data(&self) -> &HALData { &self.$base.data() }
 
-			fn hal_buffer(&self) -> &<Backend as gfx_hal::Backend>::Buffer { self.0.hal_buffer() }
+			fn hal_buffer(&self) -> &<Backend as gfx_hal::Backend>::Buffer {
+				self.$base.hal_buffer()
+			}
 
 			fn block(&self) -> &<SmartAllocator<Backend> as MemoryAllocator<Backend>>::Block {
-				self.0.block()
+				self.$base.block()
 			}
 		}
 	};
 }
 
-impl_inner!(GPUBuffer);
-impl_inner!(CPUBuffer);
-
-impl InnerBuffer for StagingBuffer<'_> {
-	fn data(&self) -> &HALData { &self.base.data() }
-
-	fn hal_buffer(&self) -> &<Backend as gfx_hal::Backend>::Buffer { self.base.hal_buffer() }
-
-	fn block(&self) -> &<SmartAllocator<Backend> as MemoryAllocator<Backend>>::Block {
-		self.base.block()
-	}
-}
+impl_inner!(GPUBuffer, 0);
+impl_inner!(CPUBuffer, 0);
+impl_inner!(StagingBuffer, base);

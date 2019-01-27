@@ -37,12 +37,12 @@ pub struct CommandPool<'a> {
 impl<'a> CommandPool<'a> {
 	pub(crate) fn create(data: &HALData) -> CommandPool {
 		println!("Creating Commandpool");
-		let device = &data.device;
+		let device = data.device();
 
 		let pool = unsafe {
 			device
 				.create_command_pool_typed(
-					&data.queue_group.borrow(),
+					&data.queue_group().borrow(),
 					CommandPoolCreateFlags::empty(),
 				)
 				.unwrap()
@@ -96,7 +96,7 @@ impl<'a> CommandPool<'a> {
 
 impl<'a> Drop for CommandPool<'a> {
 	fn drop(&mut self) {
-		let device = &self.data.device;
+		let device = self.data.device();
 		unsafe {
 			self.reset();
 			device.destroy_command_pool(

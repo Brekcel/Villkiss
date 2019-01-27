@@ -89,8 +89,8 @@ pub struct UniformInfoData {
 }
 
 pub trait PushConstantInfo {
-	const STAGES: &'static [ShaderStageFlags];
 	const SIZE: u32;
+	const STAGES: &'static [ShaderStageFlags];
 }
 
 impl PushConstantInfo for () {
@@ -116,7 +116,7 @@ impl<
 		);
 
 		println!("Creating Shader");
-		let device = &data.device;
+		let device = data.device();
 
 		let mods = shaders.make_mods(device);
 
@@ -242,7 +242,7 @@ impl<
 	> Drop for Shader<'a, Vertex, Uniforms, Index, Constants>
 {
 	fn drop(&mut self) {
-		let device = &self.data.device;
+		let device = self.data.device();
 		unsafe {
 			MaybeUninit::take(&mut self.mods).man_drop(device);
 

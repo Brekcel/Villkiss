@@ -2,7 +2,6 @@
 #![allow(dead_code)]
 #![feature(cell_update)]
 #![feature(maybe_uninit)]
-#![feature(nll)]
 
 #[cfg(feature = "dx11")]
 pub use gfx_backend_dx11 as gfx_back;
@@ -42,6 +41,7 @@ pub use crate::{
 	texture::Texture,
 	window::Window,
 };
+mod util;
 
 pub mod buffer;
 pub mod commandpool;
@@ -57,5 +57,4 @@ pub mod semaphore;
 pub mod shader;
 pub mod swapchain;
 pub mod texture;
-mod util;
 pub mod window;

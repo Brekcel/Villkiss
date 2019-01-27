@@ -16,7 +16,7 @@ pub struct Fence<'a> {
 impl<'a> Fence<'a> {
 	pub(crate) fn create(data: &HALData) -> Fence {
 		println!("Creating Fence");
-		let fence = data.device.create_fence(true).unwrap();
+		let fence = data.device().create_fence(true).unwrap();
 		Fence {
 			data,
 			fence: MaybeUninit::new(fence),
@@ -26,14 +26,14 @@ impl<'a> Fence<'a> {
 	pub fn reset(&self) {
 		let fence = self.fence();
 		unsafe {
-			self.data.device.reset_fence(fence).unwrap();
+			self.data.device().reset_fence(fence).unwrap();
 		}
 	}
 
 	pub fn wait(&self) {
 		let fence = self.fence();
 		unsafe {
-			self.data.device.wait_for_fence(fence, !0).unwrap();
+			self.data.device().wait_for_fence(fence, !0).unwrap();
 		}
 	}
 
@@ -51,7 +51,7 @@ impl<'a> Fence<'a> {
 
 impl<'a> Drop for Fence<'a> {
 	fn drop(&mut self) {
-		let device = &self.data.device;
+		let device = self.data.device();
 		unsafe {
 			device.destroy_fence(MaybeUninit::take(&mut self.fence));
 		}

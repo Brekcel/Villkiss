@@ -5,6 +5,7 @@ use std::{
 		size_of,
 		MaybeUninit,
 	},
+	any::TypeId,
 	ops::Range,
 	slice,
 };
@@ -35,6 +36,10 @@ use gfx_hal::{
 };
 
 use crate::{
+	buffer::{
+		Buffer,
+		BufferView,
+	},
 	gfx_back::Backend,
 	shader::{
 		IndexType,
@@ -45,7 +50,6 @@ use crate::{
 		VertexInfo,
 	},
 	util::TakeExt,
-	buffer::{BufferView, Buffer},
 	RenderPass,
 };
 
@@ -125,7 +129,7 @@ impl<
 		};
 
 		println!("Creating Pipeline");
-		let device = &pass.swapchain.data.device;
+		let device = pass.swapchain.data.device();
 		let pipe_to_hal = PipeToHal::create(specialization);
 		let shad_set = shader.make_set(pipe_to_hal.make_hal());
 		let pipe_layout = shader.pipe_layout();
@@ -192,13 +196,14 @@ impl<
 impl<
 		'a,
 		C: BorrowMut<<Backend as gfx_hal::Backend>::CommandBuffer>,
-		Vertex: VertexInfo,
+		Vertex: VertexInfo + 'static,
 		Uniforms: UniformInfo,
-		Index: IndexType,
+		Index: IndexType + 'static,
 		Constants: PushConstantInfo,
 	> BoundPipe<'a, C, Vertex, Uniforms, Index, Constants>
 {
 	pub fn bind_vertex_buffer<'b, T: Buffer<'b>>(&mut self, buffer: &BufferView<'b, T>) {
+		assert_eq!(*buffer.type_id(), TypeId::of::<Vertex>());
 		unsafe {
 			self.encoder
 				.bind_vertex_buffers(0, once((buffer.hal_buffer(), buffer.offset())));
@@ -206,6 +211,7 @@ impl<
 	}
 
 	pub fn bind_index_buffer<'b, T: Buffer<'b>>(&mut self, buffer: &BufferView<'b, T>) {
+		assert_eq!(*buffer.type_id(), TypeId::of::<Index>());
 		unsafe {
 			self.encoder.bind_index_buffer(IndexBufferView {
 				buffer: buffer.hal_buffer(),
@@ -263,7 +269,7 @@ impl<
 	> Drop for Pipeline<'a, Vertex, Uniforms, Index, Constants>
 {
 	fn drop(&mut self) {
-		let device = &self.pass.swapchain.data.device;
+		let device = self.pass.swapchain.data.device();
 		unsafe {
 			device.destroy_graphics_pipeline(MaybeUninit::take(&mut self.pipe));
 		}

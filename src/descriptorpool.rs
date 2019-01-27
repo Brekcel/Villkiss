@@ -50,7 +50,7 @@ impl<
 		pool_count: usize,
 	) -> DescriptorPool<'a, Vertex, Uniforms, Index, Constants> {
 		println!("Creating Descriptors");
-		let device = &shader.data.device;
+		let device = shader.data.device();
 		let desc_layout = shader.desc_layout();
 		let mut descriptor_pool = {
 			let descriptors = shader
@@ -85,7 +85,7 @@ impl<
 	}
 
 	pub fn write(&self, set: usize, descriptor: &[Descriptor<Backend>]) {
-		let device = &self.shader.data.device;
+		let device = self.shader.data.device();
 		let writes = descriptor
 			.iter()
 			.enumerate()
@@ -112,7 +112,7 @@ impl<
 	> Drop for DescriptorPool<'a, Vertex, Uniforms, Index, Constants>
 {
 	fn drop(&mut self) {
-		let device = &self.shader.data.device;
+		let device = self.shader.data.device();
 		let pool = MaybeUninit::take(&mut self.descriptor_pool);
 		//        pool.free_sets(self.descriptor_sets.drain(..));
 		unsafe {

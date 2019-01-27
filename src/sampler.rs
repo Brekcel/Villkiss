@@ -18,7 +18,7 @@ pub struct Sampler<'a> {
 impl<'a> Sampler<'a> {
 	pub(crate) fn create(data: &'a HALData, sampler_info: SamplerInfo) -> Sampler {
 		println!("Creating Sampler");
-		let device = &data.device;
+		let device = data.device();
 		let sampler = unsafe { device.create_sampler(sampler_info).unwrap() };
 		Sampler {
 			data,
@@ -33,7 +33,7 @@ impl<'a> Sampler<'a> {
 
 impl<'a> Drop for Sampler<'a> {
 	fn drop(&mut self) {
-		let device = &self.data.device;
+		let device = self.data.device();
 		unsafe {
 			device.destroy_sampler(MaybeUninit::take(&mut self.sampler));
 		}

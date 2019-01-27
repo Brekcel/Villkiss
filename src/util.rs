@@ -9,9 +9,19 @@ impl<T> TakeExt<T> for std::mem::MaybeUninit<T> {
 	}
 }
 
-pub(crate) trait GFXRes: Drop {
-	//    fn data(&self) -> &HALData;
-	//	fn device(&self) -> &<Backend as gfx_hal::Backend>::Device {
-	//		&self.data().device
-	//	}
-}
+//pub trait GFXRes: Drop {
+//	fn data(&self) -> &HALData;
+//	fn device(&self) -> &<Backend as gfx_hal::Backend>::Device {
+// &self.data().device() }
+//}
+//
+//#[macro_export]
+//macro_rules! impl_res {
+//	($name: ty, $($x:tt)*) => {
+//		impl GFXRes for $name {
+//			fn data(&self) -> &HALData {
+//				&self.$($x)*
+//			}
+//		}
+//	};
+//}

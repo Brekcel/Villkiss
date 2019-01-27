@@ -52,7 +52,10 @@ use gfx_memory::{
 };
 
 use crate::{
-	buffer::{inner::InnerBuffer, StagingBuffer},
+	buffer::{
+		inner::InnerBuffer,
+		StagingBuffer,
+	},
 	gfx_back::Backend,
 	util::TakeExt,
 	CommandPool,
@@ -110,7 +113,7 @@ impl<'a> Texture<'a> {
 		staging_buf: &'b StagingBuffer,
 	) -> Texture<'a> {
 		println!("Creating Texture");
-		let device = &data.device;
+		let device = data.device();
 		let extent = info.kind.extent();
 		let command_pool = &staging_buf.command_pool;
 		let mip_levels = info.mipmaps.levels(info);
@@ -232,7 +235,7 @@ impl<'a> Texture<'a> {
 		<Backend as gfx_hal::Backend>::Image,
 		<SmartAllocator<Backend> as MemoryAllocator<Backend>>::Block,
 	) {
-		let device = &data.device;
+		let device = data.device();
 		let mips = info.mipmaps.levels(*info);
 		unsafe {
 			let mut image = device
@@ -247,8 +250,7 @@ impl<'a> Texture<'a> {
 				.unwrap();
 			let reqs = device.get_image_requirements(&image);
 			let block = data
-				.allocator
-				.get_ref()
+				.allocator()
 				.borrow_mut()
 				.alloc(device, (Type::General, Properties::DEVICE_LOCAL), reqs)
 				.unwrap();
@@ -438,11 +440,10 @@ impl<'a> Texture<'a> {
 impl<'a> Drop for Texture<'a> {
 	fn drop(&mut self) {
 		let img = MaybeUninit::take(&mut self.image);
-		let device = &self.data.device;
+		let device = self.data.device();
 		unsafe {
 			self.data
-				.allocator
-				.get_ref()
+				.allocator()
 				.borrow_mut()
 				.free(device, MaybeUninit::take(&mut self.block));
 

@@ -23,7 +23,7 @@ impl<'a> FrameBuffer<'a> {
 		sizes: &'b [Extent],
 	) -> FrameBuffer<'a> {
 		println!("Creating Framebuffer");
-		let device = &pass.swapchain.data.device;
+		let device = pass.swapchain.data.device();
 		let frames = views
 			.iter()
 			.enumerate()
@@ -73,7 +73,7 @@ impl<'a> Index<usize> for FrameBuffer<'a> {
 
 impl<'a> Drop for FrameBuffer<'a> {
 	fn drop(&mut self) {
-		let device = &self.pass.swapchain.data.device;
+		let device = self.pass.swapchain.data.device();
 		self.frames
 			.drain(..)
 			.for_each(|frame| unsafe { device.destroy_framebuffer(frame) });
